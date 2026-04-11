@@ -1,6 +1,10 @@
 uniqlo:
   # Country/language path segment used to build the Uniqlo API URL.
-  # Examples: "de/de" (Germany), "uk/en" (UK), "fr/fr" (France)
+  # Europe:       "de/de", "uk/en", "fr/fr", "es/es", "it/it",
+  #               "be/fr", "be/nl", "nl/nl", "dk/en", "se/en"
+  # Americas:     "us/en", "ca/en", "ca/fr"
+  # Asia-Pacific: "jp/ja", "kr/ko", "au/en", "in/en", "sg/en",
+  #               "my/en", "id/en", "vn/vi"
   country: "de/de"
 
   # How often to poll the Uniqlo API (in minutes)

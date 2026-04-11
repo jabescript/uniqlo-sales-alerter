@@ -54,11 +54,30 @@ uniqlo:
 
 | Country | Value |
 |---------|-------|
+| **Europe** | |
 | Germany | `de/de` |
 | UK | `uk/en` |
 | France | `fr/fr` |
 | Spain | `es/es` |
 | Italy | `it/it` |
+| Belgium (FR) | `be/fr` |
+| Belgium (NL) | `be/nl` |
+| Netherlands | `nl/nl` |
+| Denmark | `dk/en` |
+| Sweden | `se/en` |
+| **Americas** | |
+| US | `us/en` |
+| Canada (EN) | `ca/en` |
+| Canada (FR) | `ca/fr` |
+| **Asia-Pacific** | |
+| Japan | `jp/ja` |
+| South Korea | `kr/ko` |
+| Australia | `au/en` |
+| India | `in/en` |
+| Singapore | `sg/en` |
+| Malaysia | `my/en` |
+| Indonesia | `id/en` |
+| Vietnam | `vn/vi` |
 
 ### 3. Configure your filters
 

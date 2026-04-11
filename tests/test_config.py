@@ -23,7 +23,7 @@ class TestAppConfig:
         cfg = AppConfig.model_validate({"uniqlo": {"country": "uk/en"}})
         assert cfg.country_code == "uk"
         assert cfg.lang_code == "en"
-        assert cfg.client_id == "uq.uk.web-spa"
+        assert cfg.client_id == "uq.gb.web-spa"
         assert "uk/api/commerce/v5/en" in cfg.base_url
 
     def test_gender_normalised_to_upper(self):
