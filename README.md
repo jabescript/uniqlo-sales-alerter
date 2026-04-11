@@ -472,6 +472,18 @@ sudo systemctl restart uniqlo-alerter  # restart after config changes
 sudo systemctl stop uniqlo-alerter     # stop
 ```
 
+### 7. Update to the latest version
+
+```bash
+cd /opt/uniqlo-sales-alerter
+source .venv/bin/activate
+git pull
+pip install -e .                         # only needed if dependencies changed
+sudo systemctl restart uniqlo-alerter
+```
+
+The editable install loads code directly from the source tree, so `git pull` brings in all code changes. Re-running `pip install -e .` is only necessary when `pyproject.toml` has new or updated dependencies. The service restart is always required to pick up the changes.
+
 ### Quick test before enabling
 
 Before setting up the service, verify everything works:
