@@ -10,22 +10,15 @@ A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and se
 - [Configuration](#configuration)
 - [Deployment](#deployment)
 - [Preview Modes](#preview-modes)
-- [Notifications](#notifications)
-- [How It Works](#how-it-works)
 - [Development](#development)
-
-## Features
-
-- **Periodic sale monitoring** — polls the Uniqlo catalogue on a configurable interval
-- **Configurable filters** — gender, minimum discount %, clothing/pants/shoe sizes (verified against real-time stock), watched product URLs
-- **Preview modes** — CLI (terminal) or HTML (visual report with product images)
-- **Notifications** — Telegram (with images), Email (HTML), extensible to Discord/Slack/etc.
 
 ## Quick Start
 
-The fastest way to get running is with Docker. You need two files in a folder:
+The fastest way to get running is with Docker. You can configure via a YAML file or purely through environment variables.
 
-**config.yaml** — copy the [example config](config.yaml) and set your country + filters:
+### Docker with config file
+
+Create a **config.yaml** — copy the [example config](config.yaml) and set your country + filters:
 
 ```yaml
 uniqlo:
@@ -39,7 +32,7 @@ filters:
     clothing: [S, M, L]
 ```
 
-**.env** — your notification secrets (only include what you use):
+Create an **.env** file for notification secrets (only include what you use):
 
 ```env
 SMTP_USER=you@gmail.com
@@ -48,35 +41,13 @@ TELEGRAM_BOT_TOKEN=123456:ABC...
 TELEGRAM_CHAT_ID=987654321
 ```
 
-### Docker Compose
-
-```yaml
-services:
-  uniqlo-alerter:
-    image: kequach/uniqlo-sales-alerter:latest
-    container_name: uniqlo-alerter
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - alerter-state:/app/data
-    env_file:
-      - .env
-    environment:
-      - STATE_FILE=/app/data/.seen_variants.json
-
-volumes:
-  alerter-state:
-```
+Then start with Docker Compose (using the shipped [`docker-compose.yml`](docker-compose.yml)):
 
 ```bash
 docker compose up -d
 ```
 
-Open <http://localhost:8000/docs> for the interactive API docs.
-
-### Docker run
+Or with `docker run`:
 
 ```bash
 docker run -d \
@@ -90,36 +61,75 @@ docker run -d \
   kequach/uniqlo-sales-alerter
 ```
 
-| Flag | Purpose |
-|---|---|
-| `-d` | Run in the background (detached) |
-| `-p 8000:8000` | Expose the REST API and docs at `http://localhost:8000/docs` |
-| `-v ./config.yaml:…:ro` | Mount your config file (read-only) |
-| `-v alerter-state:…` | Named volume so the state file survives restarts |
-| `--env-file .env` | Load notification secrets from `.env` |
-| `--restart unless-stopped` | Auto-restart on failure or reboot |
+### Docker with env vars only
+
+You can skip the config file entirely and pass everything as `-e` flags. Only values that differ from the defaults need to be set. This example uses Gmail notifications for Germany with a 30% minimum discount:
+
+```bash
+docker run -d \
+  --name uniqlo-alerter \
+  -p 8000:8000 \
+  -v alerter-state:/app/data \
+  -e STATE_FILE=/app/data/.seen_variants.json \
+  -e UNIQLO_COUNTRY=de/de \
+  -e UNIQLO_CHECK_INTERVAL=30 \
+  -e FILTER_GENDER=men,women \
+  -e FILTER_MIN_SALE_PERCENTAGE=30 \
+  -e FILTER_SIZES_CLOTHING=S,M,L \
+  -e EMAIL_ENABLED=true \
+  -e SMTP_USER=you@gmail.com \
+  -e SMTP_PASSWORD=your-app-password \
+  -e SMTP_FROM=you@gmail.com \
+  -e SMTP_TO=you@gmail.com \
+  --restart unless-stopped \
+  kequach/uniqlo-sales-alerter
+```
+
+> When both a config file and env vars are present, env vars take precedence. See the full [env var reference](#environment-variables).
 
 ### Without Docker
 
-Requires [Python 3.11+](https://www.python.org/downloads/).
+Requires [Python 3.11+](https://www.python.org/downloads/). On Linux/macOS you may need `python3` instead of `python`.
+
+**1. Install:**
 
 ```bash
 git clone https://github.com/kequach/uniqlo-sales-alerter.git
 cd uniqlo-sales-alerter
 python -m pip install -e .
+```
+
+Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract, and run `pip install -e .` in the folder.
+
+**2. Configure:** edit `config.yaml` — set your country, filters, and at least one notification channel (see [Configuration](#configuration)).
+
+**3. Try it out** with a one-off HTML preview (opens in your browser, no notification setup needed):
+
+```bash
+python -m uniqlo_sales_alerter --preview-html
+```
+
+**4. Or start the server** to run on a schedule and send notifications:
+
+```bash
+export SMTP_USER="you@gmail.com"            # Linux / macOS
+export SMTP_PASSWORD="your-app-password"
 python -m uniqlo_sales_alerter
 ```
 
+```powershell
+$env:SMTP_USER     = "you@gmail.com"        # Windows (PowerShell)
+$env:SMTP_PASSWORD = "your-app-password"
+python -m uniqlo_sales_alerter
+```
+
+The server runs on `http://localhost:8000` with interactive API docs at `/docs`.
+
 ## Configuration
 
-All configuration lives in `config.yaml`. Secrets are passed as environment variables and referenced with `${VAR_NAME}` syntax so they stay out of version control.
+Configuration can be provided via `config.yaml`, [environment variables](#environment-variables), or both (env vars take precedence). Secrets can be referenced in YAML with `${VAR_NAME}` syntax so they stay out of version control.
 
 ### Supported countries
-
-```yaml
-uniqlo:
-  country: "de/de"
-```
 
 **Full support** — discount percentage, original vs. sale price, all filters:
 
@@ -148,7 +158,7 @@ uniqlo:
 
 > **What does "limited support" mean?** These stores flag items as on sale, but their API does not expose the original (pre-sale) price — only the current price. This means the alerter cannot calculate how much an item is discounted, so notifications will show the current price with a "Sale" label instead of a percentage. The `min_sale_percentage` filter is automatically skipped for these countries; gender and size filters still work normally.
 
-**Singapore requires `sale_paths`** — Singapore organises most of its sale catalogue into category paths rather than flagging items individually. Without `sale_paths` configured, the alerter will only find a handful of items. See [Sale category paths](#sale-category-paths) below.
+**Singapore requires `sale_paths`** — Singapore organises most of its sale catalogue into category paths rather than flagging items individually. Without `sale_paths` configured, the alerter will only find a handful of items. See [Sale category paths](#sale-category-paths).
 
 ### Filters
 
@@ -232,13 +242,15 @@ uniqlo:
 
 </details>
 
-> You can specify as many paths as you like. Items are deduplicated automatically.
+### Notifications
 
-### Email notifications (Gmail)
+#### Email (Gmail)
 
-1. Go to [myaccount.google.com](https://myaccount.google.com) → **Security** → enable **2-Step Verification**.
+Deals are sent as a single HTML email with product images, prices, discount badges, and direct links per size.
+
+1. Go to [myaccount.google.com](https://myaccount.google.com) > **Security** > enable **2-Step Verification**.
 2. Go to [App Passwords](https://myaccount.google.com/apppasswords), create one for "Mail", and copy the 16-character password.
-3. Add to `config.yaml`:
+3. Add to `config.yaml` (or use the equivalent [env vars](#environment-variables)):
 
 ```yaml
 notifications:
@@ -255,8 +267,6 @@ notifications:
         - "you@gmail.com"
 ```
 
-4. Set the environment variables `SMTP_USER` and `SMTP_PASSWORD` (via `.env`, `export`, or your deployment method).
-
 <details>
 <summary><strong>Other email providers</strong></summary>
 
@@ -269,11 +279,13 @@ notifications:
 
 </details>
 
-### Telegram notifications
+#### Telegram
+
+Each deal is sent as a photo message with the product image, price drop, discount percentage, available sizes, and a link to the product page.
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and copy the **bot token**.
 2. Send any message to your new bot, then open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` to find your **chat ID**.
-3. Add to `config.yaml`:
+3. Add to `config.yaml` (or use the equivalent [env vars](#environment-variables)):
 
 ```yaml
 notifications:
@@ -284,9 +296,7 @@ notifications:
       chat_id: "${TELEGRAM_CHAT_ID}"
 ```
 
-4. Set the environment variables `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-
-### Notification modes
+#### Notification modes
 
 The `notify_on` setting controls which deals trigger a notification:
 
@@ -295,11 +305,6 @@ The `notify_on` setting controls which deals trigger a notification:
 | **All then new** *(default)* | `all_then_new` | All deals on first check after startup, then only changes. |
 | **New deals only** | `new_deals` | Only changes, even across restarts (state persists). |
 | **Every check** | `every_check` | All matching deals on every check. Good for digests. |
-
-```yaml
-notifications:
-  notify_on: all_then_new
-```
 
 <details>
 <summary><strong>What counts as a "change"?</strong></summary>
@@ -313,27 +318,73 @@ notifications:
 | Product goes back on sale | Yes |
 | No change (same sizes, colours, price) | No |
 
-The system tracks every `product:color:size:discount%` combination in `.seen_variants.json`. A deal is "new" if it has at least one previously unseen combination. In `all_then_new` mode the state resets on restart; in `new_deals` mode it persists. Delete `.seen_variants.json` to reset tracking.
+The system tracks every `product:color:size:discount%` combination. A deal is "new" if it has at least one previously unseen combination. In `all_then_new` mode the state resets on restart; in `new_deals` mode it persists to `.seen_variants.json`. Delete that file to reset tracking.
+
+</details>
+
+### Environment variables
+
+Every config option can be set via environment variables instead of (or in addition to) `config.yaml`. When both are present, **env vars win**.
+
+<details>
+<summary><strong>Full env var reference</strong></summary>
+
+| Env variable | Type | Config equivalent |
+|---|---|---|
+| `UNIQLO_COUNTRY` | string | `uniqlo.country` |
+| `UNIQLO_CHECK_INTERVAL` | int | `uniqlo.check_interval_minutes` |
+| `UNIQLO_SALE_PATHS` | comma-separated | `uniqlo.sale_paths` |
+| `FILTER_GENDER` | comma-separated | `filters.gender` |
+| `FILTER_MIN_SALE_PERCENTAGE` | float | `filters.min_sale_percentage` |
+| `FILTER_SIZES_CLOTHING` | comma-separated | `filters.sizes.clothing` |
+| `FILTER_SIZES_PANTS` | comma-separated | `filters.sizes.pants` |
+| `FILTER_SIZES_SHOES` | comma-separated | `filters.sizes.shoes` |
+| `FILTER_SIZES_ONE_SIZE` | true/false | `filters.sizes.one_size` |
+| `FILTER_WATCHED_URLS` | comma-separated | `filters.watched_urls` |
+| `NOTIFY_ON` | string | `notifications.notify_on` |
+| `PREVIEW_CLI` | true/false | `notifications.preview_cli` |
+| `PREVIEW_HTML` | true/false | `notifications.preview_html` |
+| `TELEGRAM_ENABLED` | true/false | `notifications.channels.telegram.enabled` |
+| `TELEGRAM_BOT_TOKEN` | string | `notifications.channels.telegram.bot_token` |
+| `TELEGRAM_CHAT_ID` | string | `notifications.channels.telegram.chat_id` |
+| `EMAIL_ENABLED` | true/false | `notifications.channels.email.enabled` |
+| `SMTP_HOST` | string | `notifications.channels.email.smtp_host` |
+| `SMTP_PORT` | int | `notifications.channels.email.smtp_port` |
+| `SMTP_USE_TLS` | true/false | `notifications.channels.email.use_tls` |
+| `SMTP_USER` | string | `notifications.channels.email.smtp_user` |
+| `SMTP_PASSWORD` | string | `notifications.channels.email.smtp_password` |
+| `SMTP_FROM` | string | `notifications.channels.email.from_address` |
+| `SMTP_TO` | comma-separated | `notifications.channels.email.to_addresses` |
 
 </details>
 
 ## Deployment
 
-### Docker (recommended)
+### Updating
 
-See [Quick Start](#quick-start) for getting up and running. Additional Docker operations:
+**Docker:**
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+**Git install:**
+
+```bash
+git pull
+pip install -e .
+sudo systemctl restart uniqlo-alerter   # if using systemd
+```
+
+### Docker tips
+
+**Useful commands:**
 
 ```bash
 docker compose logs -f              # live log output
 docker compose restart              # restart after config changes
 docker compose down                 # stop and remove container
-```
-
-**Update to latest version:**
-
-```bash
-docker compose pull
-docker compose up -d
 ```
 
 **One-off preview** (runs a single check and exits):
@@ -342,17 +393,18 @@ docker compose up -d
 docker run --rm \
   -v ./config.yaml:/app/config.yaml:ro \
   --env-file .env \
-  kequach/uniqlo-sales-alerter:latest \
+  kequach/uniqlo-sales-alerter \
   python -m uniqlo_sales_alerter --preview-cli
 ```
 
 > The state file (`.seen_variants.json`) is stored in the `alerter-state` named volume so it survives container restarts and updates.
 
-The image is available on [Docker Hub](https://hub.docker.com/r/kequach/uniqlo-sales-alerter).
+The image is available on [Docker Hub](https://hub.docker.com/r/kequach/uniqlo-sales-alerter) for `linux/amd64` and `linux/arm64`.
 
-### Linux (Raspberry Pi / VPS)
+### Linux (systemd)
 
-Run as a systemd service for automatic startup, restart on failure, and background operation.
+<details>
+<summary><strong>Run as a systemd service on a Raspberry Pi or VPS</strong></summary>
 
 **1. Install:**
 
@@ -369,11 +421,7 @@ pip install -e .
 
 **2. Configure:**
 
-```bash
-nano config.yaml
-```
-
-Create a secrets file:
+Edit `config.yaml`, then create a secrets file:
 
 ```bash
 sudo nano /etc/uniqlo-sales-alerter.env
@@ -436,80 +484,18 @@ sudo journalctl -u uniqlo-alerter -f   # live logs
 sudo systemctl restart uniqlo-alerter  # restart
 ```
 
-**6. Update:**
-
-```bash
-cd /opt/uniqlo-sales-alerter
-source .venv/bin/activate
-git pull
-pip install -e .
-sudo systemctl restart uniqlo-alerter
-```
-
-**Quick test** (before enabling the service):
-
-```bash
-cd /opt/uniqlo-sales-alerter
-source .venv/bin/activate
-export $(cat /etc/uniqlo-sales-alerter.env | xargs)
-python -m uniqlo_sales_alerter --preview-cli
-```
-
-### Manual (any platform)
-
-Requires [Python 3.11+](https://www.python.org/downloads/).
-
-**Install:**
-
-```bash
-git clone https://github.com/kequach/uniqlo-sales-alerter.git
-cd uniqlo-sales-alerter
-python -m pip install -e .
-```
-
-Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract, and run `python -m pip install -e .` in the folder.
-
-> On Linux/macOS you may need `python3` instead of `python`.
-
-**Set environment variables:**
-
-```bash
-# Linux / macOS
-export SMTP_USER="you@gmail.com"
-export SMTP_PASSWORD="abcd efgh ijkl mnop"
-```
-
-```powershell
-# Windows (PowerShell)
-$env:SMTP_USER     = "you@gmail.com"
-$env:SMTP_PASSWORD = "abcd efgh ijkl mnop"
-```
-
-**Test and run:**
-
-```bash
-python -m uniqlo_sales_alerter --preview-cli   # one-off check
-python -m uniqlo_sales_alerter                  # start server
-```
-
-The server runs on `http://localhost:8000` with interactive API docs at `/docs`.
+</details>
 
 ## Preview Modes
 
-Preview modes let you see matching deals locally without waiting for the next scheduled check.
-
-| Mode | CLI flag | What it does |
-|------|----------|--------------|
-| **CLI** | `--preview-cli` | Prints deals to the terminal (colour-coded) |
-| **HTML** | `--preview-html` | Generates an HTML report with product images and opens it in your browser |
+Preview modes let you see matching deals locally without sending notifications.
 
 ```bash
-python -m uniqlo_sales_alerter --preview-cli
-python -m uniqlo_sales_alerter --preview-html
-python -m uniqlo_sales_alerter --preview-html --config path/to/config.yaml
+python -m uniqlo_sales_alerter --preview-cli    # terminal output
+python -m uniqlo_sales_alerter --preview-html   # HTML report in browser
 ```
 
-Previews can also run alongside the server by setting `preview_cli: true` or `preview_html: true` under `notifications` in `config.yaml`.
+Previews can also run alongside the server by setting `preview_cli: true` or `preview_html: true` in `config.yaml` (or `PREVIEW_CLI=true` / `PREVIEW_HTML=true` as env vars).
 
 ### CLI example
 
@@ -531,66 +517,25 @@ Previews can also run alongside the server by setting `preview_cli: true` or `pr
   3. Souffle Yarn Pullover
      €39.90 -> €19.90  (-50%)
          M  https://www.uniqlo.com/de/de/products/E476543-000/00?colorDisplayCode=01&sizeDisplayCode=004
-
-  Scanned 284 sale items, 3 matched your filters.
 ```
 
 ### HTML example
 
 ![HTML preview report](docs/img/html_preview.png)
 
-The report includes product images, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported. Reports are saved to `reports/`.
-
-## Notifications
-
-### Telegram
-
-Each deal is sent as a photo message with the product image and a caption showing the price drop, discount percentage, available sizes, and a link to the product page.
-
-### Email
-
-Deals are sent as a single HTML email with product images, prices, discount badges, and direct links per size.
-
-### Adding a custom channel
-
-The notification system uses Python's `Protocol` for structural subtyping:
-
-```python
-from uniqlo_sales_alerter.models.products import SaleItem
-
-class DiscordNotifier:
-    def __init__(self, config):
-        self._config = config
-
-    def is_enabled(self) -> bool:
-        return self._config.enabled
-
-    async def send(self, deals: list[SaleItem]) -> None:
-        ...
-```
-
-Register it in `notifications/dispatcher.py` or at runtime via `dispatcher.register(notifier)`.
-
-## How It Works
-
-The server reverse-engineers Uniqlo's internal Commerce API (the same one their website uses). On each check it:
-
-1. Queries four API sources in parallel — `flagCodes=discount` and `flagCodes=limitedOffer` across both v5 and v3 API versions — and merges/deduplicates the results. Different regions use different versions and flags; this ensures full coverage.
-2. For full-support countries, verifies each item has a promo price lower than the base price and computes the discount percentage. For limited-support countries the API returns promo equal to base, so items are included with a "Sale" label instead of a percentage.
-3. Applies your filters (gender, sizes, min discount %). The `min_sale_percentage` filter is automatically skipped for items without a known discount.
-4. **Verifies real-time stock** — fetches the stock endpoint per product to check which colour×size combinations are purchasable. Out-of-stock sizes are excluded.
-5. Generates **direct variant URLs** pointing to an in-stock colour for each size. The colour with the highest stock quantity is preferred.
-6. Caches results for fast API responses.
-7. Compares variants against a persistent state file (`.seen_variants.json`) to flag new or changed deals.
-8. Sends notifications via enabled channels.
+The report includes product images, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported.
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"              # install with dev dependencies
-python -m pytest tests/ -v           # run tests
-python -m ruff check src/ tests/     # lint
+pip install -e ".[dev]"
+python -m pytest tests/ -v
+python -m ruff check src/ tests/
 ```
+
+### How it works
+
+The server talks to Uniqlo's internal Commerce API (the same one their website uses). On each check it queries multiple API versions and flag codes in parallel, deduplicates the results, applies your filters, verifies real-time stock per colour/size variant, and generates direct URLs to purchasable items. A persistent state file tracks which variants have already been seen so you only get notified about changes.
 
 ### Project structure
 

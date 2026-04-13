@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from uniqlo_sales_alerter.config import AppConfig, load_config
+from uniqlo_sales_alerter.config import (
+    AppConfig,
+    _coerce,
+    _config_from_env,
+    _deep_merge,
+    load_config,
+)
 
 
 class TestAppConfig:
@@ -108,3 +114,137 @@ class TestLoadConfig:
         config_file.write_text("")
         cfg = load_config(config_file)
         assert cfg.country_code == "de"
+
+
+class TestCoerce:
+    def test_str(self):
+        assert _coerce("hello", "str") == "hello"
+
+    def test_int(self):
+        assert _coerce("42", "int") == 42
+
+    def test_float(self):
+        assert _coerce("30.5", "float") == 30.5
+
+    def test_bool_true(self):
+        for val in ("1", "true", "True", "TRUE", "yes", "YES"):
+            assert _coerce(val, "bool") is True
+
+    def test_bool_false(self):
+        for val in ("0", "false", "no", "other"):
+            assert _coerce(val, "bool") is False
+
+    def test_list(self):
+        assert _coerce("S, M, L", "list") == ["S", "M", "L"]
+
+    def test_list_single_item(self):
+        assert _coerce("men", "list") == ["men"]
+
+    def test_list_empty_string(self):
+        assert _coerce("", "list") == []
+
+
+class TestDeepMerge:
+    def test_flat(self):
+        assert _deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
+
+    def test_override(self):
+        assert _deep_merge({"a": 1}, {"a": 2}) == {"a": 2}
+
+    def test_nested(self):
+        base = {"a": {"x": 1, "y": 2}}
+        over = {"a": {"y": 3, "z": 4}}
+        assert _deep_merge(base, over) == {"a": {"x": 1, "y": 3, "z": 4}}
+
+    def test_override_replaces_non_dict(self):
+        assert _deep_merge({"a": [1]}, {"a": [2, 3]}) == {"a": [2, 3]}
+
+
+class TestConfigFromEnv:
+    def test_picks_up_set_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("UNIQLO_COUNTRY", "uk/en")
+        monkeypatch.setenv("FILTER_MIN_SALE_PERCENTAGE", "25")
+        result = _config_from_env()
+        assert result["uniqlo"]["country"] == "uk/en"
+        assert result["filters"]["min_sale_percentage"] == 25.0
+
+    def test_ignores_unset_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("UNIQLO_COUNTRY", raising=False)
+        result = _config_from_env()
+        assert "uniqlo" not in result or "country" not in result.get("uniqlo", {})
+
+    def test_list_var(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FILTER_GENDER", "men,women,unisex")
+        result = _config_from_env()
+        assert result["filters"]["gender"] == ["men", "women", "unisex"]
+
+    def test_nested_sizes(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FILTER_SIZES_CLOTHING", "S,M,L")
+        monkeypatch.setenv("FILTER_SIZES_ONE_SIZE", "true")
+        result = _config_from_env()
+        assert result["filters"]["sizes"]["clothing"] == ["S", "M", "L"]
+        assert result["filters"]["sizes"]["one_size"] is True
+
+    def test_telegram_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("TELEGRAM_ENABLED", "true")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok123")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "456")
+        result = _config_from_env()
+        tg = result["notifications"]["channels"]["telegram"]
+        assert tg["enabled"] is True
+        assert tg["bot_token"] == "tok123"
+        assert tg["chat_id"] == "456"
+
+    def test_smtp_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("SMTP_HOST", "mail.example.com")
+        monkeypatch.setenv("SMTP_PORT", "465")
+        monkeypatch.setenv("SMTP_TO", "a@b.com,c@d.com")
+        result = _config_from_env()
+        email = result["notifications"]["channels"]["email"]
+        assert email["smtp_host"] == "mail.example.com"
+        assert email["smtp_port"] == 465
+        assert email["to_addresses"] == ["a@b.com", "c@d.com"]
+
+
+class TestLoadConfigEnvVars:
+    """Integration tests for load_config with env-var-only and hybrid modes."""
+
+    def test_env_only_no_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("UNIQLO_COUNTRY", "us/en")
+        monkeypatch.setenv("FILTER_GENDER", "men")
+        monkeypatch.setenv("FILTER_MIN_SALE_PERCENTAGE", "20")
+        cfg = load_config(tmp_path / "nonexistent.yaml")
+        assert cfg.country_code == "us"
+        assert cfg.filters.gender == ["MEN"]
+        assert cfg.filters.min_sale_percentage == 20.0
+
+    def test_env_overrides_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        yaml_content = textwrap.dedent("""\
+            uniqlo:
+              country: "de/de"
+            filters:
+              min_sale_percentage: 50
+        """)
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml_content)
+        monkeypatch.setenv("UNIQLO_COUNTRY", "fr/fr")
+        cfg = load_config(config_file)
+        assert cfg.country_code == "fr"
+        assert cfg.filters.min_sale_percentage == 50.0
+
+    def test_env_merges_with_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        yaml_content = textwrap.dedent("""\
+            uniqlo:
+              country: "de/de"
+              check_interval_minutes: 60
+        """)
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml_content)
+        monkeypatch.setenv("TELEGRAM_ENABLED", "true")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+        cfg = load_config(config_file)
+        assert cfg.country_code == "de"
+        assert cfg.uniqlo.check_interval_minutes == 60
+        assert cfg.notifications.channels.telegram.enabled is True
+        assert cfg.notifications.channels.telegram.bot_token == "tok"
