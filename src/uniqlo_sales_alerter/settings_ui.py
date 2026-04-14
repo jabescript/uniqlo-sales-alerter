@@ -371,8 +371,12 @@ _TEMPLATE = """\
       <div class="field">
         <label for="watched-urls">Watched URLs</label>
         <div class="help">
-          Full Uniqlo product URLs to always include when available in stock,
-          even when the item is not on sale. One URL per line.
+          Track specific products regardless of sale status.
+          You get notified when a watched item is in stock, comes
+          back in stock, gets a new size, goes on sale,
+          or changes discount. Open the product on uniqlo.com,
+          pick your colour and size, and paste the full page URL
+          here. One URL per line.
         </div>
         <textarea id="watched-urls" rows="4"
           placeholder="https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=70&amp;sizeDisplayCode=003"></textarea>

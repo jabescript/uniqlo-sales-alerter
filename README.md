@@ -209,7 +209,18 @@ A product passes if it has **at least one** in-stock size matching any configure
 
 ### Watched products
 
-Track a specific product regardless of whether it's on sale:
+Have your eye on a specific item that isn't on sale yet? Add its URL to `watched_urls` and the alerter will monitor it alongside the sale catalogue. Watched products bypass all sale, discount, gender, and size filters — they only need to be purchasable.
+
+A notification is triggered when a watched product:
+
+- is **in stock** for the first time (or comes **back in stock** after being unavailable)
+- gets a **new size** available for purchase
+- **goes on sale** (receives a discount)
+- has its **discount percentage change** (e.g. from 30% to 50%)
+
+Once you've been notified about a specific variant, you won't be notified again until something changes — same rules as regular deals.
+
+To get the URL, open the product on uniqlo.com, select your preferred **colour** and **size**, then copy the page URL. The alerter extracts the colour and size codes and prefers them during stock checks. The watched size is included even if it falls outside your normal size filter.
 
 ```yaml
 filters:
@@ -217,7 +228,7 @@ filters:
     - "https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003"
 ```
 
-You'll be notified whenever the item is in stock, even without a discount.
+Watched items appear with a **WATCHED** badge in notifications.
 
 ### Sale category paths
 
@@ -321,12 +332,11 @@ The `notify_on` setting controls which deals trigger a notification:
 |--------|:----------------------:|
 | New product appears on sale | Yes |
 | New size becomes available | Yes |
-| New colour becomes available | Yes |
 | Discount percentage changes | Yes |
 | Product goes back on sale | Yes |
-| No change (same sizes, colours, price) | No |
+| No change (same sizes, price) | No |
 
-The system tracks every `product:color:size:discount%` combination. A deal is "new" if it has at least one previously unseen combination. In `all_then_new` mode the state resets on restart; in `new_deals` mode it persists to `.seen_variants.json`. Delete that file to reset tracking.
+The system tracks every `product:color:size:discount%` combination per size, using the best in-stock colour. A deal is "new" if it has at least one previously unseen combination. A new colour triggers a notification only when it changes which variant is selected for a size (e.g. it becomes the only in-stock option). In `all_then_new` mode the state resets on restart; in `new_deals` mode it persists to `.seen_variants.json`. Delete that file to reset tracking.
 
 </details>
 
