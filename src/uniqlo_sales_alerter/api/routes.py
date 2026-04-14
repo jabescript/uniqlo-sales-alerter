@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from uniqlo_sales_alerter.models.products import SaleCheckResult, SaleItem
 
@@ -13,6 +13,24 @@ router = APIRouter(prefix="/api/v1")
 _NO_RESULT = HTTPException(
     status_code=503, detail="No sale check has been run yet",
 )
+
+_SECRET_FIELDS: list[tuple[list[str], str]] = [
+    (["notifications", "channels", "telegram", "bot_token"], "bot_token"),
+    (["notifications", "channels", "email", "smtp_password"], "smtp_password"),
+]
+
+
+def _redact_secrets(data: dict[str, Any]) -> dict[str, Any]:
+    """Replace secret values with ``'***'`` for safe external display."""
+    import copy
+    d = copy.deepcopy(data)
+    for path, _key in _SECRET_FIELDS:
+        node = d
+        for segment in path[:-1]:
+            node = node.get(segment, {})
+        if node.get(path[-1]):
+            node[path[-1]] = "***"
+    return d
 
 
 def _latest_result() -> SaleCheckResult:
@@ -84,13 +102,36 @@ async def get_config() -> dict[str, Any]:
     """Return the active configuration (secrets are redacted)."""
     from uniqlo_sales_alerter.main import state
 
-    data = state.config.model_dump()
+    return _redact_secrets(state.config.model_dump())
 
-    tg = data.get("notifications", {}).get("channels", {}).get("telegram", {})
-    if tg.get("bot_token"):
-        tg["bot_token"] = "***"
-    email = data.get("notifications", {}).get("channels", {}).get("email", {})
-    if email.get("smtp_password"):
-        email["smtp_password"] = "***"
 
-    return data
+@router.put("/config")
+async def update_config(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Validate, persist, and reload configuration."""
+    from uniqlo_sales_alerter.config import AppConfig, save_config
+    from uniqlo_sales_alerter.main import reload_config, state
+
+    current = state.config
+    for path, _key in _SECRET_FIELDS:
+        node = body
+        for segment in path[:-1]:
+            node = node.get(segment, {})
+        if node.get(path[-1]) == "***":
+            src: Any = current
+            for segment in path:
+                src = getattr(src, segment, "")
+            node[path[-1]] = src
+
+    try:
+        config = AppConfig.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    save_config(config)
+    await reload_config()
+
+    return {
+        "status": "ok",
+        "message": "Configuration saved and reloaded",
+        "config": _redact_secrets(config.model_dump()),
+    }

@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28",
     "pydantic>=2.10",
     "pyyaml>=6.0",
+    "ruamel-yaml>=0.18,<0.19",
     "apscheduler>=3.10,<4",
     "python-telegram-bot>=21",
     "aiosmtplib>=3",

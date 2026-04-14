@@ -9,12 +9,14 @@ from typing import AsyncIterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
-from uniqlo_sales_alerter.api.routes import router
-from uniqlo_sales_alerter.config import AppConfig, load_config
+from uniqlo_sales_alerter.api.routes import _redact_secrets, router
+from uniqlo_sales_alerter.config import AppConfig, load_config, save_config
 from uniqlo_sales_alerter.models.products import SaleCheckResult
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
+from uniqlo_sales_alerter.settings_ui import build_settings_page
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,17 +74,44 @@ def _schedule_job(app_state: AppState) -> None:
     logger.info("Scheduled sale checks every %d minute(s)", interval)
 
 
+async def reload_config() -> AppConfig:
+    """Reload configuration from YAML (without re-applying env overrides)."""
+    global state
+    state.scheduler.remove_all_jobs()
+    await state.sale_checker.close()
+
+    config = load_config(apply_env_overrides=False)
+    checker = SaleChecker(config)
+    dispatcher = NotificationDispatcher(config)
+    scheduler = state.scheduler
+    state = AppState(
+        config=config,
+        sale_checker=checker,
+        dispatcher=dispatcher,
+        scheduler=scheduler,
+    )
+
+    async def _job() -> None:
+        await run_sale_check(state)
+
+    interval = config.uniqlo.check_interval_minutes
+    scheduler.add_job(_job, "interval", minutes=interval, id="sale_check")
+    logger.info("Config reloaded — rescheduled checks every %d minute(s)", interval)
+    return config
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global state
     config = load_config()
+    save_config(config)
+
     checker = SaleChecker(config)
     dispatcher = NotificationDispatcher(config)
     state = AppState(config=config, sale_checker=checker, dispatcher=dispatcher)
 
     _schedule_job(state)
 
-    # Run an initial check immediately
     try:
         await run_sale_check(state)
     except Exception:
@@ -108,3 +137,10 @@ app.include_router(router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page() -> HTMLResponse:
+    """Serve the configuration web UI."""
+    config_data = _redact_secrets(state.config.model_dump())
+    return HTMLResponse(build_settings_page(config_data))

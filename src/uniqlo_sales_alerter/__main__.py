@@ -88,6 +88,10 @@ def _run_server() -> None:
         print("  pip install uvicorn[standard]")
         sys.exit(1)
 
+    logging.getLogger(__name__).info(
+        "Settings UI: http://localhost:8000/settings",
+    )
+
     uvicorn.run(
         "uniqlo_sales_alerter.main:app",
         host="0.0.0.0",

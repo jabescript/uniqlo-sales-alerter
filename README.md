@@ -1,5 +1,9 @@
 # Uniqlo Sales Alerter
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-hub-2496ED.svg)](https://hub.docker.com/r/kequach/uniqlo-sales-alerter)
+
 A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and sends you notifications when items match your criteria. Talks directly to Uniqlo's internal Commerce API — no browser automation or scraping required.
 
 ![Mail report](docs/img/mail.png)
@@ -7,14 +11,30 @@ A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and se
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Web UI](#web-ui)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
 - [Preview Modes](#preview-modes)
+- [REST API](#rest-api)
 - [Development](#development)
 
 ## Quick Start
 
-The fastest way to get running is with Docker. You can configure via a YAML file or purely through environment variables.
+The fastest way to get running is with Docker. Start without any config and set everything up in the browser, or provide a YAML file / environment variables for automated setups.
+
+### Docker — zero config (recommended to get started)
+
+Start the alerter with a single command — no config files, no environment variables:
+
+```bash
+docker run -d --name uniqlo-alerter -p 8000:8000 kequach/uniqlo-sales-alerter
+```
+
+Then open **http://localhost:8000/settings** to set your country, filters, sizes, and notification channels in the built-in web UI. Click **Save & Reload** to apply.
+
+![Web UI settings page](docs/img/webUI.png)
+
+The app starts with sensible defaults (Germany, 50 % min discount, no notifications) so you can explore the web UI immediately. Configuration is persisted inside the container; for long-term use see [Docker with config file](#docker-with-config-file) below.
 
 ### Docker with config file
 
@@ -32,15 +52,6 @@ filters:
     clothing: [S, M, L]
 ```
 
-Create an **.env** file for notification secrets (only include what you use):
-
-```env
-SMTP_USER=you@gmail.com
-SMTP_PASSWORD=your-app-password
-TELEGRAM_BOT_TOKEN=123456:ABC...
-TELEGRAM_CHAT_ID=987654321
-```
-
 Then start with Docker Compose (using the shipped [`docker-compose.yml`](docker-compose.yml)):
 
 ```bash
@@ -53,17 +64,18 @@ Or with `docker run`:
 docker run -d \
   --name uniqlo-alerter \
   -p 8000:8000 \
-  -v ./config.yaml:/app/config.yaml:ro \
+  -v ./config.yaml:/app/config.yaml \
   -v alerter-state:/app/data \
   -e STATE_FILE=/app/data/.seen_variants.json \
-  --env-file .env \
   --restart unless-stopped \
   kequach/uniqlo-sales-alerter
 ```
 
+> You can edit the config at any time — including notification credentials — via the [web UI](#web-ui) at `http://localhost:8000/settings`. Changes are saved to your `config.yaml` and applied immediately.
+
 ### Docker with env vars only
 
-You can skip the config file entirely and pass everything as `-e` flags. Only values that differ from the defaults need to be set. This example uses Gmail notifications for Germany with a 30% minimum discount:
+You can skip the config file entirely and pass everything as `-e` flags. Only values that differ from the defaults need to be set. Environment variables are persisted to `config.yaml` on first startup so they can be edited later via the [web UI](#web-ui). This example uses Gmail notifications for Germany with a 30% minimum discount:
 
 ```bash
 docker run -d \
@@ -85,7 +97,7 @@ docker run -d \
   kequach/uniqlo-sales-alerter
 ```
 
-> When both a config file and env vars are present, env vars take precedence. See the full [env var reference](#environment-variables).
+> When both a config file and env vars are present, env vars take precedence on the first startup and are then written to `config.yaml`. See the full [env var reference](#environment-variables).
 
 ### Without Docker
 
@@ -101,33 +113,29 @@ python -m pip install -e .
 
 Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract, and run `pip install -e .` in the folder.
 
-**2. Configure:** edit `config.yaml` — set your country, filters, and at least one notification channel (see [Configuration](#configuration)).
-
-**3. Try it out** with a one-off HTML preview (opens in your browser, no notification setup needed):
+**2. Try it out** with a one-off HTML preview (opens in your browser, no notification setup needed):
 
 ```bash
 python -m uniqlo_sales_alerter --preview-html
 ```
 
-**4. Or start the server** to run on a schedule and send notifications:
+**3. Or start the server** to run on a schedule:
 
 ```bash
-export SMTP_USER="you@gmail.com"            # Linux / macOS
-export SMTP_PASSWORD="your-app-password"
 python -m uniqlo_sales_alerter
 ```
 
-```powershell
-$env:SMTP_USER     = "you@gmail.com"        # Windows (PowerShell)
-$env:SMTP_PASSWORD = "your-app-password"
-python -m uniqlo_sales_alerter
-```
+The server runs on `http://localhost:8000` with the [web UI](#web-ui) at `/settings` and interactive API docs at `/docs`. Open the web UI to set your country, filters, and notification channels.
 
-The server runs on `http://localhost:8000` with interactive API docs at `/docs`.
+## Web UI
+
+The built-in settings page at **`/settings`** lets you view and edit the entire configuration in your browser. Changes are saved to `config.yaml` (preserving comments) and applied immediately — no restart required.
+
+It covers all settings: country, check interval, sale paths, gender/size filters, watched URLs, notification modes, and Telegram/email channels. Secret fields (bot token, SMTP password) are masked; leaving them as `***` keeps the existing value. Available whenever the server is running, regardless of how you started the alerter.
 
 ## Configuration
 
-Configuration can be provided via `config.yaml`, [environment variables](#environment-variables), or both (env vars take precedence). Secrets can be referenced in YAML with `${VAR_NAME}` syntax so they stay out of version control.
+Configuration can be provided via the [web UI](#web-ui), `config.yaml`, [environment variables](#environment-variables), or any combination. The web UI is the easiest option; for automated or headless setups, use the file or env vars. On startup, env vars are merged into `config.yaml` so all settings end up in one place.
 
 ### Supported countries
 
@@ -250,7 +258,7 @@ Deals are sent as a single HTML email with product images, prices, discount badg
 
 1. Go to [myaccount.google.com](https://myaccount.google.com) > **Security** > enable **2-Step Verification**.
 2. Go to [App Passwords](https://myaccount.google.com/apppasswords), create one for "Mail", and copy the 16-character password.
-3. Add to `config.yaml` (or use the equivalent [env vars](#environment-variables)):
+3. Add to `config.yaml` or configure via the [web UI](#web-ui):
 
 ```yaml
 notifications:
@@ -260,8 +268,8 @@ notifications:
       smtp_host: "smtp.gmail.com"
       smtp_port: 587
       use_tls: true
-      smtp_user: "${SMTP_USER}"
-      smtp_password: "${SMTP_PASSWORD}"
+      smtp_user: "you@gmail.com"
+      smtp_password: "your-app-password"
       from_address: "you@gmail.com"
       to_addresses:
         - "you@gmail.com"
@@ -285,15 +293,15 @@ Each deal is sent as a photo message with the product image, price drop, discoun
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and copy the **bot token**.
 2. Send any message to your new bot, then open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` to find your **chat ID**.
-3. Add to `config.yaml` (or use the equivalent [env vars](#environment-variables)):
+3. Add to `config.yaml` or configure via the [web UI](#web-ui):
 
 ```yaml
 notifications:
   channels:
     telegram:
       enabled: true
-      bot_token: "${TELEGRAM_BOT_TOKEN}"
-      chat_id: "${TELEGRAM_CHAT_ID}"
+      bot_token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+      chat_id: "987654321"
 ```
 
 #### Notification modes
@@ -324,7 +332,7 @@ The system tracks every `product:color:size:discount%` combination. A deal is "n
 
 ### Environment variables
 
-Every config option can be set via environment variables instead of (or in addition to) `config.yaml`. When both are present, **env vars win**.
+Every config option can be set via environment variables for initial bootstrapping or headless/CI setups. On first startup env vars are merged into `config.yaml`; after that the YAML file is the source of truth (editable via the [web UI](#web-ui)).
 
 <details>
 <summary><strong>Full env var reference</strong></summary>
@@ -383,7 +391,6 @@ sudo systemctl restart uniqlo-alerter   # if using systemd
 
 ```bash
 docker compose logs -f              # live log output
-docker compose restart              # restart after config changes
 docker compose down                 # stop and remove container
 ```
 
@@ -392,7 +399,6 @@ docker compose down                 # stop and remove container
 ```bash
 docker run --rm \
   -v ./config.yaml:/app/config.yaml:ro \
-  --env-file .env \
   kequach/uniqlo-sales-alerter \
   python -m uniqlo_sales_alerter --preview-cli
 ```
@@ -419,26 +425,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-**2. Configure:**
-
-Edit `config.yaml`, then create a secrets file:
-
-```bash
-sudo nano /etc/uniqlo-sales-alerter.env
-```
-
-```ini
-SMTP_USER=you@gmail.com
-SMTP_PASSWORD=abcdefghijklmnop
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-TELEGRAM_CHAT_ID=987654321
-```
-
-```bash
-sudo chmod 600 /etc/uniqlo-sales-alerter.env
-```
-
-**3. Create the service:**
+**2. Create the service:**
 
 ```bash
 sudo nano /etc/systemd/system/uniqlo-alerter.service
@@ -454,7 +441,6 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/opt/uniqlo-sales-alerter
-EnvironmentFile=/etc/uniqlo-sales-alerter.env
 ExecStart=/opt/uniqlo-sales-alerter/.venv/bin/python -m uniqlo_sales_alerter
 Restart=on-failure
 RestartSec=30
@@ -469,12 +455,14 @@ WantedBy=multi-user.target
 
 > Change `User=pi` to your username. On a VPS this might be `ubuntu`, `deploy`, etc.
 
-**4. Start:**
+**3. Start:**
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now uniqlo-alerter
 ```
+
+**4. Configure:** open `http://<your-host>:8000/settings` in a browser to set country, filters, and notification credentials via the web UI.
 
 **5. Manage:**
 
@@ -495,9 +483,16 @@ python -m uniqlo_sales_alerter --preview-cli    # terminal output
 python -m uniqlo_sales_alerter --preview-html   # HTML report in browser
 ```
 
-Previews can also run alongside the server by setting `preview_cli: true` or `preview_html: true` in `config.yaml` (or `PREVIEW_CLI=true` / `PREVIEW_HTML=true` as env vars).
+Previews can also run alongside the server by enabling `preview_cli` or `preview_html` in the [web UI](#web-ui) or `config.yaml`.
 
-### CLI example
+### HTML preview
+
+![HTML preview report](docs/img/html_preview.png)
+
+The report includes product images, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported.
+
+<details>
+<summary><strong>CLI preview example</strong></summary>
 
 ```
 ============================================================
@@ -519,11 +514,21 @@ Previews can also run alongside the server by setting `preview_cli: true` or `pr
          M  https://www.uniqlo.com/de/de/products/E476543-000/00?colorDisplayCode=01&sizeDisplayCode=004
 ```
 
-### HTML example
+</details>
 
-![HTML preview report](docs/img/html_preview.png)
+## REST API
 
-The report includes product images, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported.
+The server exposes a JSON API alongside the web UI. Interactive docs (Swagger UI) are available at `/docs`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/settings` | Web UI (HTML) |
+| `GET` | `/api/v1/sales` | Latest sale-check results (filterable by `gender`, `min_discount`) |
+| `POST` | `/api/v1/sales/check` | Trigger an immediate sale check |
+| `GET` | `/api/v1/products/{id}` | Look up a specific product |
+| `GET` | `/api/v1/config` | Current configuration (secrets redacted) |
+| `PUT` | `/api/v1/config` | Update configuration (save & reload) |
 
 ## Development
 
@@ -544,6 +549,7 @@ src/uniqlo_sales_alerter/
 ├── __main__.py              # CLI entry-point
 ├── main.py                  # FastAPI app, scheduler
 ├── config.py                # YAML + env var config loading
+├── settings_ui.py           # Web UI settings page
 ├── api/routes.py            # REST endpoints
 ├── clients/uniqlo.py        # Uniqlo Commerce API client
 ├── models/products.py       # Pydantic models

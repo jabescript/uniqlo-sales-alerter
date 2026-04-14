@@ -11,7 +11,7 @@ uniqlo:
   country: "de/de"
 
   # How often to poll the Uniqlo API (in minutes)
-  check_interval_minutes: 15
+  check_interval_minutes: 30
 
   # Optional: sale category path IDs to fetch from.
   # Some countries (notably Singapore) organise their sale items into
@@ -89,16 +89,15 @@ notifications:
   channels:
     telegram:
       enabled: false
-      bot_token: "${TELEGRAM_BOT_TOKEN}"
-      chat_id: "${TELEGRAM_CHAT_ID}"
+      bot_token: ""
+      chat_id: ""
 
     email:
-      enabled: true
+      enabled: false
       smtp_host: "smtp.gmail.com"
       smtp_port: 587
       use_tls: true
-      smtp_user: "${SMTP_USER}"
-      smtp_password: "${SMTP_PASSWORD}"
-      from_address: "${SMTP_FROM}"
-      to_addresses:
-        - "${SMTP_TO}"
+      smtp_user: ""
+      smtp_password: ""
+      from_address: ""
+      to_addresses: []

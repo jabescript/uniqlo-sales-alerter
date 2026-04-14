@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedSeq
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +224,62 @@ class AppConfig(BaseModel):
         return f"https://www.uniqlo.com/{self.uniqlo.country}/products"
 
 
-def load_config(path: Path | str | None = None) -> AppConfig:
+def _deep_update_yaml(target: dict, source: dict) -> None:
+    """Recursively merge *source* into *target*, preserving YAML comments.
+
+    ruamel.yaml attaches comments that appear *between* the last item of a
+    block sequence and the next mapping key to that last sequence item.
+    A naive ``target[key] = plain_list`` would discard those comments, so
+    we rebuild a ``CommentedSeq`` and transplant the trailing comment from
+    the old sequence's last item to the new one.
+    """
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update_yaml(target[key], value)
+        elif isinstance(value, list):
+            old = target.get(key)
+            new_seq = CommentedSeq(value)
+            if isinstance(old, CommentedSeq) and old.ca.items:
+                last_old = max(old.ca.items)
+                last_new = len(new_seq) - 1
+                if last_new >= 0:
+                    new_seq.ca.items[last_new] = old.ca.items[last_old]
+            target[key] = new_seq
+        else:
+            target[key] = value
+
+
+def _write_yaml(data: dict[str, Any], path: Path) -> None:
+    """Write config to YAML, preserving existing comments when possible."""
+    rt = YAML()
+    rt.preserve_quotes = True
+
+    if path.exists():
+        existing = rt.load(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            _deep_update_yaml(existing, data)
+            to_write = existing
+        else:
+            to_write = data
+    else:
+        to_write = data
+
+    with path.open("w", encoding="utf-8") as fh:
+        rt.dump(to_write, fh)
+    logger.info("Configuration written to %s", path)
+
+
+def save_config(config: AppConfig, path: Path | str | None = None) -> None:
+    """Persist a validated configuration to YAML."""
+    config_path = Path(path) if path else _DEFAULT_CONFIG_PATH
+    _write_yaml(config.model_dump(), config_path)
+
+
+def load_config(
+    path: Path | str | None = None,
+    *,
+    apply_env_overrides: bool = True,
+) -> AppConfig:
     """Load and validate configuration.
 
     Resolution order (later wins):
@@ -230,9 +287,10 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     1. Pydantic defaults
     2. ``config.yaml`` (with ``${VAR}`` placeholder substitution)
     3. Environment variables (``UNIQLO_COUNTRY``, ``FILTER_GENDER``, …)
+       — only when *apply_env_overrides* is ``True`` (the default).
 
-    This means you can run with *only* env vars (no YAML at all), *only*
-    a YAML file, or a combination where env vars override specific fields.
+    Set *apply_env_overrides* to ``False`` when reloading after a web-UI
+    save so that the persisted YAML is the sole source of truth.
     """
     config_path = Path(path) if path else _DEFAULT_CONFIG_PATH
 
@@ -243,8 +301,9 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         logger.info("No config file at %s — building config from env vars", config_path)
         resolved = {}
 
-    env_overrides = _config_from_env()
-    if env_overrides:
-        resolved = _deep_merge(resolved, env_overrides)
+    if apply_env_overrides:
+        env_overrides = _config_from_env()
+        if env_overrides:
+            resolved = _deep_merge(resolved, env_overrides)
 
     return AppConfig.model_validate(resolved)
