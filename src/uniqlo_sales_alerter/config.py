@@ -71,6 +71,10 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("TELEGRAM_ENABLED",            ["notifications", "channels", "telegram", "enabled"],   "bool"),
     ("TELEGRAM_BOT_TOKEN",          ["notifications", "channels", "telegram", "bot_token"], "str"),
     ("TELEGRAM_CHAT_ID",            ["notifications", "channels", "telegram", "chat_id"],   "str"),
+    # -- quiet hours --
+    ("QUIET_HOURS_ENABLED",         ["quiet_hours", "enabled"],                              "bool"),
+    ("QUIET_HOURS_START",           ["quiet_hours", "start"],                                "str"),
+    ("QUIET_HOURS_END",             ["quiet_hours", "end"],                                  "str"),
     # -- email / SMTP --
     ("EMAIL_ENABLED",               ["notifications", "channels", "email", "enabled"],      "bool"),
     ("SMTP_HOST",                   ["notifications", "channels", "email", "smtp_host"],    "str"),
@@ -183,10 +187,28 @@ class NotificationConfig(BaseModel):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
 
+class QuietHoursConfig(BaseModel):
+    """Suppress API calls and notifications during a daily time window."""
+    enabled: bool = False
+    start: str = Field(default="01:00", pattern=r"^\d{1,2}:\d{2}$")
+    end: str = Field(default="08:00", pattern=r"^\d{1,2}:\d{2}$")
+
+    @model_validator(mode="after")
+    def _validate_times(self) -> "QuietHoursConfig":
+        import time as _time
+        for label, value in [("start", self.start), ("end", self.end)]:
+            try:
+                _time.strptime(value, "%H:%M")
+            except ValueError:
+                raise ValueError(f"quiet_hours.{label} must be HH:MM (got {value!r})")
+        return self
+
+
 class AppConfig(BaseModel):
     uniqlo: UniqloConfig = Field(default_factory=UniqloConfig)
     filters: FilterConfig = Field(default_factory=FilterConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
+    quiet_hours: QuietHoursConfig = Field(default_factory=QuietHoursConfig)
 
     @model_validator(mode="after")
     def _normalise_gender(self) -> "AppConfig":

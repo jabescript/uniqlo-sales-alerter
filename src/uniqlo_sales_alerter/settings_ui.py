@@ -296,14 +296,32 @@ _TEMPLATE = """\
         <input type="number" id="check-interval" min="1" step="1"/>
       </div>
 
-      <div class="field">
-        <label for="sale-paths">Sale Category Paths</label>
-        <div class="help">
-          Optional category path IDs, comma-separated. Some countries (e.g.&nbsp;Singapore)
-          organise sale items into paths instead of tagging them.
-          Find yours in the sale-page URL: <code>…/feature/sale/men?path=<b>5856</b></code>
+      <div class="toggle-row field">
+        <div>
+          <span class="toggle-label">Quiet Hours</span>
+          <div class="toggle-help">
+            Suppress all API calls and notifications during a daily time window.
+          </div>
         </div>
-        <input type="text" id="sale-paths" placeholder="e.g. 5855, 5856, 5857, 5858"/>
+        <label class="toggle">
+          <input type="checkbox" id="quiet-hours-enabled"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="field" style="display:flex;gap:16px">
+        <div style="flex:1">
+          <label for="quiet-hours-start">Start (HH:MM)</label>
+          <input type="text" id="quiet-hours-start" placeholder="01:00" maxlength="5"/>
+        </div>
+        <div style="flex:1">
+          <label for="quiet-hours-end">End (HH:MM)</label>
+          <input type="text" id="quiet-hours-end" placeholder="08:00" maxlength="5"/>
+        </div>
+      </div>
+      <div class="help" style="margin-top:-10px">
+        24-hour format. The window may cross midnight (e.g.&nbsp;23:00 &ndash; 06:00).
+        Uses local system time.
       </div>
 
     </div>
@@ -488,6 +506,24 @@ _TEMPLATE = """\
     </div>
   </div>
 
+  <!-- ── Sale Category Paths ─────────────────── -->
+  <div class="section">
+    <div class="section-header">Sale Category Paths (Singapore only)</div>
+    <div class="section-body">
+
+      <div class="field">
+        <label for="sale-paths">Path IDs</label>
+        <div class="help">
+          Optional category path IDs, comma-separated. Some countries (e.g.&nbsp;Singapore)
+          organise sale items into paths instead of tagging them.
+          Find yours in the sale-page URL: <code>…/feature/sale/men?path=<b>5856</b></code>
+        </div>
+        <input type="text" id="sale-paths" placeholder="e.g. 5855, 5856, 5857, 5858"/>
+      </div>
+
+    </div>
+  </div>
+
 </form>
 </main>
 
@@ -560,6 +596,11 @@ _TEMPLATE = """\
 
     $("watched-urls").value = (cfg.filters.watched_urls || []).join("\\n");
 
+    var qh = cfg.quiet_hours || {};
+    $("quiet-hours-enabled").checked = !!qh.enabled;
+    $("quiet-hours-start").value     = qh.start || "01:00";
+    $("quiet-hours-end").value       = qh.end   || "08:00";
+
     $("preview-cli").checked  = !!cfg.notifications.preview_cli;
     $("preview-html").checked = !!cfg.notifications.preview_html;
     $("notify-on").value      = cfg.notifications.notify_on;
@@ -591,6 +632,11 @@ _TEMPLATE = """\
         country: val("country"),
         check_interval_minutes: parseInt(val("check-interval"), 10) || 15,
         sale_paths: splitCSV(val("sale-paths"))
+      },
+      quiet_hours: {
+        enabled: checked("quiet-hours-enabled"),
+        start:   val("quiet-hours-start") || "01:00",
+        end:     val("quiet-hours-end")   || "08:00"
       },
       filters: {
         gender: genders,

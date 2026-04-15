@@ -29,15 +29,15 @@ uniqlo:
 filters:
   # Which genders to include. Valid values: men, women, unisex, kids, baby
   gender:
-    - men
-    - women
-    - unisex
+  - MEN
+  - WOMEN
+  - UNISEX
 
   # Minimum discount percentage to surface a deal. Default: 50
   # Only applies to countries where the API provides both original and sale
   # prices.  For limited-support countries (US, CA, JP, KR, SG) this filter
   # is ignored because no discount info is available.
-  min_sale_percentage: 50
+  min_sale_percentage: 50.0
 
   # Size filters — only show items available in at least one of these sizes.
   # Each item's stock is verified in real-time; out-of-stock sizes are excluded
@@ -50,14 +50,14 @@ filters:
   # One Size: bags, hats, accessories, etc.
   sizes:
     clothing:
-      - M
+    - M
     pants:
-      - "30inch"
-      - "31inch"
-      - "32inch"
+    - 30inch
+    - 31inch
+    - 32inch
     shoes:
-      - "42"
-      - "42.5"
+    - '42'
+    - '42.5'
     one_size: true
 
   # Full Uniqlo product URLs to always include when available in stock,
@@ -65,11 +65,20 @@ filters:
   # preferred during stock verification, and the watched size is included
   # even when it falls outside your size filter.
   watched_urls:
-    - "https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=70&sizeDisplayCode=003"
-    - "https://www.uniqlo.com/de/de/products/E469830-000/00?colorDisplayCode=09&sizeDisplayCode=003"
-    - "https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=38&sizeDisplayCode=360"
-    - "https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=09&sizeDisplayCode=360"
-    - "https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003"
+  - https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=70&sizeDisplayCode=003
+  - https://www.uniqlo.com/de/de/products/E469830-000/00?colorDisplayCode=09&sizeDisplayCode=003
+  - https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=38&sizeDisplayCode=360
+  - https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=09&sizeDisplayCode=360
+  - https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003
+
+quiet_hours:
+  # Suppress all API calls and notifications during this daily window.
+  # Useful for avoiding overnight checks.  Uses local system time.
+  # Times are in 24-hour HH:MM format; the window may cross midnight
+  # (e.g. start: "23:00", end: "06:00").
+  enabled: false
+  start: "01:00"
+  end: "08:00"
 
 notifications:
   # Preview modes — generate local previews of matched deals.

@@ -85,6 +85,9 @@ docker run -d \
   -e STATE_FILE=/app/data/.seen_variants.json \
   -e UNIQLO_COUNTRY=de/de \
   -e UNIQLO_CHECK_INTERVAL=30 \
+  -e QUIET_HOURS_ENABLED=true \
+  -e QUIET_HOURS_START=01:00 \
+  -e QUIET_HOURS_END=08:00 \
   -e FILTER_GENDER=men,women \
   -e FILTER_MIN_SALE_PERCENTAGE=30 \
   -e FILTER_SIZES_CLOTHING=S,M,L \
@@ -131,7 +134,7 @@ The server runs on `http://localhost:8000` with the [web UI](#web-ui) at `/setti
 
 The built-in settings page at **`/settings`** lets you view and edit the entire configuration in your browser. Changes are saved to `config.yaml` (preserving comments) and applied immediately — no restart required.
 
-It covers all settings: country, check interval, sale paths, gender/size filters, watched URLs, notification modes, and Telegram/email channels. Secret fields (bot token, SMTP password) are masked; leaving them as `***` keeps the existing value. Available whenever the server is running, regardless of how you started the alerter.
+It covers all settings: country, check interval, sale paths, quiet hours, gender/size filters, watched URLs, notification modes, and Telegram/email channels. Secret fields (bot token, SMTP password) are masked; leaving them as `***` keeps the existing value. Available whenever the server is running, regardless of how you started the alerter.
 
 ## Configuration
 
@@ -340,6 +343,19 @@ The system tracks every `product:color:size:discount%` combination per size, usi
 
 </details>
 
+### Quiet hours
+
+You can suppress all API calls and notifications during a daily time window — useful for avoiding overnight checks. When a scheduled check fires during quiet hours it is silently skipped; the next check runs normally once the window ends.
+
+```yaml
+quiet_hours:
+  enabled: true
+  start: "01:00"
+  end: "08:00"
+```
+
+Times are in 24-hour `HH:MM` format using local system time. The window may cross midnight (e.g. `23:00` – `06:00`).
+
 ### Environment variables
 
 Every config option can be set via environment variables for initial bootstrapping or headless/CI setups. On first startup env vars are merged into `config.yaml`; after that the YAML file is the source of truth (editable via the [web UI](#web-ui)).
@@ -352,6 +368,9 @@ Every config option can be set via environment variables for initial bootstrappi
 | `UNIQLO_COUNTRY` | string | `uniqlo.country` |
 | `UNIQLO_CHECK_INTERVAL` | int | `uniqlo.check_interval_minutes` |
 | `UNIQLO_SALE_PATHS` | comma-separated | `uniqlo.sale_paths` |
+| `QUIET_HOURS_ENABLED` | true/false | `quiet_hours.enabled` |
+| `QUIET_HOURS_START` | string (HH:MM) | `quiet_hours.start` |
+| `QUIET_HOURS_END` | string (HH:MM) | `quiet_hours.end` |
 | `FILTER_GENDER` | comma-separated | `filters.gender` |
 | `FILTER_MIN_SALE_PERCENTAGE` | float | `filters.min_sale_percentage` |
 | `FILTER_SIZES_CLOTHING` | comma-separated | `filters.sizes.clothing` |

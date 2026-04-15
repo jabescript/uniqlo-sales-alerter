@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, time
 from typing import AsyncIterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -38,6 +39,22 @@ class AppState:
 state: AppState  # module-level reference set during lifespan
 
 
+def _in_quiet_hours(config: AppConfig) -> bool:
+    """Return ``True`` if the current local time falls within the configured quiet window."""
+    qh = config.quiet_hours
+    if not qh.enabled:
+        return False
+    h_s, m_s = map(int, qh.start.split(":"))
+    h_e, m_e = map(int, qh.end.split(":"))
+    start = time(h_s, m_s)
+    end = time(h_e, m_e)
+    now = datetime.now().time()
+    if start <= end:
+        return start <= now < end
+    # Wraps midnight (e.g. 23:00 → 06:00)
+    return now >= start or now < end
+
+
 async def run_sale_check(app_state: AppState) -> SaleCheckResult:
     """Execute a sale check and dispatch notifications."""
     try:
@@ -66,6 +83,11 @@ def _schedule_job(app_state: AppState) -> None:
     """Register a periodic sale check with the async scheduler."""
 
     async def _job() -> None:
+        if _in_quiet_hours(app_state.config):
+            logger.info("Quiet hours active (%s – %s) — skipping sale check",
+                        app_state.config.quiet_hours.start,
+                        app_state.config.quiet_hours.end)
+            return
         await run_sale_check(app_state)
 
     interval = app_state.config.uniqlo.check_interval_minutes
@@ -92,6 +114,11 @@ async def reload_config() -> AppConfig:
     )
 
     async def _job() -> None:
+        if _in_quiet_hours(state.config):
+            logger.info("Quiet hours active (%s – %s) — skipping sale check",
+                        state.config.quiet_hours.start,
+                        state.config.quiet_hours.end)
+            return
         await run_sale_check(state)
 
     interval = config.uniqlo.check_interval_minutes
