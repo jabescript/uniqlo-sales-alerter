@@ -91,7 +91,8 @@ docker run -d \
   -e FILTER_GENDER=men,women \
   -e FILTER_MIN_SALE_PERCENTAGE=30 \
   -e FILTER_SIZES_CLOTHING=S,M,L \
-  -e SERVER_URL=http://192.168.1.50:8000 \
+  -e SERVER_URL=http://192.168.1.50 \
+  -e PORT=8000 \
   -e EMAIL_ENABLED=true \
   -e SMTP_USER=you@gmail.com \
   -e SMTP_PASSWORD=your-app-password \
@@ -252,10 +253,11 @@ Product names are resolved automatically from the API on startup, just like watc
 
 ### Server URL and action buttons
 
-When `server_url` is configured, each notification includes **Ignore** and **Watch** action buttons. The Ignore button applies to the entire product; the Watch button appears per size so you can choose exactly which variant to track.
+When `server_url` is configured, each notification includes **Ignore** and **Watch** action buttons. The Ignore button applies to the entire product; the Watch button appears per size so you can choose exactly which variant to track. The configured `port` is appended automatically.
 
 ```yaml
-server_url: "http://192.168.1.50:8000"
+server_url: "http://192.168.1.50"
+port: 8000
 ```
 
 | Channel | How it works |
@@ -414,6 +416,7 @@ Every config option can be set via environment variables for initial bootstrappi
 | `FILTER_WATCHED_URLS` | comma-separated | `filters.watched_urls` (auto-migrated to `watched_variants`) |
 | `FILTER_IGNORED_IDS` | comma-separated | `filters.ignored_products` (IDs only, names blank) |
 | `SERVER_URL` | string | `server_url` |
+| `PORT` | int | `port` |
 | `NOTIFY_ON` | string | `notifications.notify_on` |
 | `PREVIEW_CLI` | true/false | `notifications.preview_cli` |
 | `PREVIEW_HTML` | true/false | `notifications.preview_html` |

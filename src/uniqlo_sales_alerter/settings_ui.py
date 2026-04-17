@@ -300,6 +300,42 @@ _TEMPLATE = """\
 <main>
 <form id="config-form" autocomplete="off">
 
+  <!-- ── Watched Variants ────────────────────────── -->
+  <div class="section">
+    <div class="section-header">Watched Variants</div>
+    <div class="section-body">
+      <div class="help" style="margin-bottom:12px">
+        Track specific product variants (colour + size) regardless of sale status.
+        Paste a Uniqlo product URL to add, or use the Watch button in notifications.
+      </div>
+      <div id="watched-list"></div>
+      <div class="field add-row">
+        <input type="text" id="watched-add"
+          placeholder="Paste a Uniqlo product URL&hellip;"/>
+        <button type="button" class="btn btn-save"
+          onclick="addWatchedFromUrl()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Ignored Products ────────────────────────── -->
+  <div class="section">
+    <div class="section-header">Ignored Products</div>
+    <div class="section-body">
+      <div class="help" style="margin-bottom:12px">
+        Products on this list are hidden from all results (any colour/size).
+        Watched variants take precedence over ignored products.
+      </div>
+      <div id="ignored-list"></div>
+      <div class="field add-row">
+        <input type="text" id="ignored-add"
+          placeholder="Product URL or ID (e.g. E483049-000)"/>
+        <button type="button" class="btn btn-save"
+          onclick="addIgnored()">Add</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── API Settings ──────────────────────────── -->
   <div class="section">
     <div class="section-header">API Settings</div>
@@ -379,12 +415,20 @@ _TEMPLATE = """\
       <div class="field" style="margin-top:18px">
         <label for="server-url">Server URL</label>
         <div class="help">
-          Base URL of this server for action buttons (Ignore / Watch) in notifications.
-          Use <code>http://localhost:8000</code> if you only access notifications on this machine,
-          or a LAN IP like <code>http://192.168.1.50:8000</code> for other devices on your network.
-          Leave empty to hide action buttons.
+          Host URL of this server for action buttons (Ignore / Watch) in notifications.
+          Use <code>http://localhost</code> if you only access notifications on this machine,
+          or a LAN IP like <code>http://192.168.1.50</code> for other devices on your network.
+          Leave empty to hide action buttons. The port is appended automatically.
         </div>
-        <input type="text" id="server-url" placeholder="http://localhost:8000"/>
+        <input type="text" id="server-url" placeholder="http://localhost"/>
+      </div>
+
+      <div class="field">
+        <label for="port">Port</label>
+        <div class="help">
+          Port the server listens on. Default: <code>8000</code>.
+        </div>
+        <input type="number" id="port" placeholder="8000" min="1" max="65535"/>
       </div>
 
     </div>
@@ -449,42 +493,6 @@ _TEMPLATE = """\
         </div>
       </div>
 
-    </div>
-  </div>
-
-  <!-- ── Watched Variants ────────────────────────── -->
-  <div class="section">
-    <div class="section-header">Watched Variants</div>
-    <div class="section-body">
-      <div class="help" style="margin-bottom:12px">
-        Track specific product variants (colour + size) regardless of sale status.
-        Paste a Uniqlo product URL to add, or use the Watch button in notifications.
-      </div>
-      <div id="watched-list"></div>
-      <div class="field add-row">
-        <input type="text" id="watched-add"
-          placeholder="Paste a Uniqlo product URL&hellip;"/>
-        <button type="button" class="btn btn-save"
-          onclick="addWatchedFromUrl()">Add</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Ignored Products ────────────────────────── -->
-  <div class="section">
-    <div class="section-header">Ignored Products</div>
-    <div class="section-body">
-      <div class="help" style="margin-bottom:12px">
-        Products on this list are hidden from all results (any colour/size).
-        Watched variants take precedence over ignored products.
-      </div>
-      <div id="ignored-list"></div>
-      <div class="field add-row">
-        <input type="text" id="ignored-add"
-          placeholder="Product URL or ID (e.g. E483049-000)"/>
-        <button type="button" class="btn btn-save"
-          onclick="addIgnored()">Add</button>
-      </div>
     </div>
   </div>
 
@@ -851,6 +859,7 @@ _TEMPLATE = """\
     renderIgnoredList(cfg.filters.ignored_products || []);
 
     $("server-url").value = cfg.server_url || "";
+    $("port").value = cfg.port || 8000;
 
     var qh = cfg.quiet_hours || {};
     $("quiet-hours-enabled").checked = !!qh.enabled;
@@ -890,6 +899,7 @@ _TEMPLATE = """\
         sale_paths: splitCSV(val("sale-paths"))
       },
       server_url: val("server-url"),
+      port: parseInt(val("port")) || 8000,
       quiet_hours: {
         enabled: checked("quiet-hours-enabled"),
         start:   val("quiet-hours-start") || "01:00",

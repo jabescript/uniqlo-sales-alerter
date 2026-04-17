@@ -56,14 +56,19 @@ def _run_server() -> None:
         print("  pip install uvicorn[standard]")
         sys.exit(1)
 
+    from uniqlo_sales_alerter.config import load_config
+
+    config = load_config()
+    port = config.port
+
     logging.getLogger(__name__).info(
-        "Settings UI: http://localhost:8000/settings",
+        "Settings UI: http://localhost:%d/settings", port,
     )
 
     uvicorn.run(
         "uniqlo_sales_alerter.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info",
     )
 

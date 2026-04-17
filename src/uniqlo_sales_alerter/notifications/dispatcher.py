@@ -47,7 +47,7 @@ class NotificationDispatcher:
         channels = ncfg.channels
         notifiers: list[Notifier] = []
 
-        server_url = config.server_url.rstrip("/")
+        server_url = config.full_server_url
 
         tg = TelegramNotifier(channels.telegram, server_url=server_url)
         notifiers.append(tg)

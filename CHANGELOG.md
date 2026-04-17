@@ -13,6 +13,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
   - **Telegram**: colour line shown between the product name and price in the caption.
   - **HTML report**: colour label displayed below the product title in each card.
   - **Console**: colour line printed after the price.
+- **Configurable port** — new `port` setting (default `8000`) controls which port the server listens on. `server_url` is now host-only (e.g. `http://192.168.1.50`); the port is appended automatically. Configurable via `config.yaml`, the web UI, or the `PORT` environment variable.
 
 ### Code quality
 

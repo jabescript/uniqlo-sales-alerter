@@ -66,6 +66,7 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("FILTER_IGNORED_IDS",          ["filters", "ignored_products"],             "list"),
     # -- server --
     ("SERVER_URL",                  ["server_url"],                              "str"),
+    ("PORT",                        ["port"],                                    "int"),
     # -- notifications --
     ("NOTIFY_ON",                   ["notifications", "notify_on"],              "str"),
     ("PREVIEW_CLI",                 ["notifications", "preview_cli"],            "bool"),
@@ -299,6 +300,7 @@ class AppConfig(BaseModel):
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     quiet_hours: QuietHoursConfig = Field(default_factory=QuietHoursConfig)
     server_url: str = ""
+    port: int = 8000
 
     @model_validator(mode="after")
     def _normalise_gender(self) -> "AppConfig":
@@ -334,6 +336,13 @@ class AppConfig(BaseModel):
     @property
     def product_page_base(self) -> str:
         return f"https://www.uniqlo.com/{self.uniqlo.country}/products"
+
+    @property
+    def full_server_url(self) -> str:
+        """``server_url`` with the configured port appended."""
+        if not self.server_url:
+            return ""
+        return f"{self.server_url.rstrip('/')}:{self.port}"
 
 
 def _deep_update_yaml(target: dict, source: dict) -> None:
