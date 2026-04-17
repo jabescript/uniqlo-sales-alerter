@@ -45,13 +45,6 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 - Removed redundant regex validation on quiet hours fields.
 - Deduplicated secret-path traversal in API routes.
 
-### New environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `FILTER_IGNORED_IDS` | Comma-separated product IDs to ignore |
-| `SERVER_URL` | Base URL for action buttons in notifications |
-
 ### New API endpoints
 
 | Method | Endpoint | Description |
