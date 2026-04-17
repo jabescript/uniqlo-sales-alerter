@@ -12,9 +12,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-from uniqlo_sales_alerter.api.routes import _redact_secrets, router
+from uniqlo_sales_alerter.api.routes import _redact_secrets, actions_router, router
+from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
 from uniqlo_sales_alerter.config import AppConfig, load_config, save_config
-from uniqlo_sales_alerter.models.products import SaleCheckResult
+from uniqlo_sales_alerter.models.products import SaleCheckResult, UniqloProduct
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 from uniqlo_sales_alerter.settings_ui import build_settings_page
@@ -41,18 +42,131 @@ state: AppState  # module-level reference set during lifespan
 
 def _in_quiet_hours(config: AppConfig) -> bool:
     """Return ``True`` if the current local time falls within the configured quiet window."""
-    qh = config.quiet_hours
-    if not qh.enabled:
+    quiet = config.quiet_hours
+    if not quiet.enabled:
         return False
-    h_s, m_s = map(int, qh.start.split(":"))
-    h_e, m_e = map(int, qh.end.split(":"))
-    start = time(h_s, m_s)
-    end = time(h_e, m_e)
+    start_h, start_m = map(int, quiet.start.split(":"))
+    end_h, end_m = map(int, quiet.end.split(":"))
+    start = time(start_h, start_m)
+    end = time(end_h, end_m)
     now = datetime.now().time()
     if start <= end:
         return start <= now < end
     # Wraps midnight (e.g. 23:00 → 06:00)
     return now >= start or now < end
+
+
+def _build_product_url(base: str, product_id: str, price_group: str,
+                       color: str = "", size: str = "") -> str:
+    """Reconstruct a Uniqlo product page URL from component fields."""
+    params = []
+    if color:
+        params.append(f"colorDisplayCode={color}")
+    if size:
+        params.append(f"sizeDisplayCode={size}")
+    qs = ("?" + "&".join(params)) if params else ""
+    return f"{base}/{product_id}/{price_group}{qs}"
+
+
+def _find_color_name(l2s: list[dict], color_code: str) -> str:
+    """Look up the human-readable colour name from L2 variant data."""
+    for l2 in l2s:
+        color = l2.get("color", {})
+        if color.get("displayCode") == color_code:
+            return color.get("name", "")
+    return ""
+
+
+def _find_size_name(product: UniqloProduct, size_code: str) -> str:
+    """Look up the human-readable size name from a product's size list."""
+    for sz in product.sizes:
+        if sz.display_code == size_code:
+            return sz.name
+    return ""
+
+
+async def _enrich_config(config: AppConfig, client: UniqloClient) -> bool:
+    """Fill in missing metadata for watched variants and ignored products.
+
+    Resolves product names, human-readable colour/size names, and
+    reconstructs missing URLs.  Returns ``True`` when at least one entry
+    was updated (caller should persist the config).
+    """
+    base = config.product_page_base
+
+    incomplete_variants = [
+        wv for wv in config.filters.watched_variants
+        if wv.id and (
+            not wv.name or not wv.color_name
+            or not wv.size_name or not wv.url
+        )
+    ]
+    incomplete_ignored = [
+        ip for ip in config.filters.ignored_products
+        if ip.id and (not ip.name or not ip.url)
+    ]
+    if not incomplete_variants and not incomplete_ignored:
+        return False
+
+    # Batch-fetch product listings for all products that need enrichment.
+    all_ids = list(
+        {wv.id for wv in incomplete_variants}
+        | {ip.id for ip in incomplete_ignored}
+    )
+    products = await client.fetch_products_by_ids(all_ids)
+    product_by_id = {p.product_id.upper(): p for p in products}
+
+    # Fetch L2 variant data (colour names) for products that need it.
+    l2_keys = {
+        (wv.id, wv.price_group)
+        for wv in incomplete_variants
+        if not wv.color_name or not wv.size_name
+    }
+    l2_by_product: dict[str, list[dict]] = {}
+    for pid, pg in l2_keys:
+        l2_by_product[pid.upper()] = await client.fetch_product_l2s(pid, pg)
+
+    changed = False
+
+    for ip in incomplete_ignored:
+        prod = product_by_id.get(ip.id.upper())
+        if prod and not ip.name:
+            ip.name = prod.name
+            changed = True
+        if not ip.url:
+            pg = prod.price_group if prod else "00"
+            ip.url = _build_product_url(base, ip.id, pg)
+            changed = True
+
+    for wv in incomplete_variants:
+        prod = product_by_id.get(wv.id.upper())
+
+        if prod and not wv.name:
+            wv.name = prod.name
+            changed = True
+
+        if not wv.url:
+            wv.url = _build_product_url(
+                base, wv.id, wv.price_group, wv.color, wv.size,
+            )
+            changed = True
+
+        if not wv.size_name and prod:
+            wv.size_name = _find_size_name(prod, wv.size)
+            changed = changed or bool(wv.size_name)
+
+        if not wv.color_name:
+            l2s = l2_by_product.get(wv.id.upper(), [])
+            wv.color_name = _find_color_name(l2s, wv.color)
+            changed = changed or bool(wv.color_name)
+
+    if changed:
+        logger.info(
+            "Enriched metadata for %d watched variant(s) "
+            "and %d ignored product(s)",
+            len(incomplete_variants), len(incomplete_ignored),
+        )
+    return changed
 
 
 async def run_sale_check(app_state: AppState) -> SaleCheckResult:
@@ -79,7 +193,7 @@ async def run_sale_check(app_state: AppState) -> SaleCheckResult:
         raise
 
 
-def _schedule_job(app_state: AppState) -> None:
+def _add_check_job(app_state: AppState) -> None:
     """Register a periodic sale check with the async scheduler."""
 
     async def _job() -> None:
@@ -91,9 +205,19 @@ def _schedule_job(app_state: AppState) -> None:
         await run_sale_check(app_state)
 
     interval = app_state.config.uniqlo.check_interval_minutes
-    app_state.scheduler.add_job(_job, "interval", minutes=interval, id="sale_check")
-    app_state.scheduler.start()
+    app_state.scheduler.add_job(
+        _job, "interval", minutes=interval, id="sale_check",
+    )
     logger.info("Scheduled sale checks every %d minute(s)", interval)
+
+
+async def _try_enrich(config: AppConfig, client: UniqloClient) -> None:
+    """Enrich watched/ignored metadata; save config if anything changed."""
+    try:
+        if await _enrich_config(config, client):
+            save_config(config)
+    except Exception:
+        logger.warning("Watched-variant enrichment failed — will retry later")
 
 
 async def reload_config() -> AppConfig:
@@ -104,26 +228,18 @@ async def reload_config() -> AppConfig:
 
     config = load_config(apply_env_overrides=False)
     checker = SaleChecker(config)
+    await _try_enrich(config, checker.http_client)
+
     dispatcher = NotificationDispatcher(config)
-    scheduler = state.scheduler
     state = AppState(
         config=config,
         sale_checker=checker,
         dispatcher=dispatcher,
-        scheduler=scheduler,
+        scheduler=state.scheduler,
     )
 
-    async def _job() -> None:
-        if _in_quiet_hours(state.config):
-            logger.info("Quiet hours active (%s – %s) — skipping sale check",
-                        state.config.quiet_hours.start,
-                        state.config.quiet_hours.end)
-            return
-        await run_sale_check(state)
-
-    interval = config.uniqlo.check_interval_minutes
-    scheduler.add_job(_job, "interval", minutes=interval, id="sale_check")
-    logger.info("Config reloaded — rescheduled checks every %d minute(s)", interval)
+    _add_check_job(state)
+    logger.info("Config reloaded")
     return config
 
 
@@ -137,7 +253,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     dispatcher = NotificationDispatcher(config)
     state = AppState(config=config, sale_checker=checker, dispatcher=dispatcher)
 
-    _schedule_job(state)
+    await _try_enrich(config, checker.http_client)
+
+    _add_check_job(state)
+    state.scheduler.start()
 
     try:
         await run_sale_check(state)
@@ -159,6 +278,7 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.include_router(actions_router)
 
 
 @app.get("/health")

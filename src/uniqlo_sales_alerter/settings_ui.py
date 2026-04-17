@@ -186,6 +186,26 @@ _TEMPLATE = """\
     margin-bottom: 4px; display: block;
   }
 
+  /* ── Product list items ──────────────────────── */
+  .list-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: .84rem;
+  }
+  .list-item:last-child { border-bottom: none; }
+  .list-item .item-name { font-weight: 600; flex: 1; }
+  .list-item .item-detail { color: var(--muted); font-size: .78rem; }
+  .list-item .remove-btn {
+    border: none; background: none; cursor: pointer;
+    color: var(--muted); font-size: 1.1rem; padding: 2px 6px;
+    border-radius: 3px; transition: color .12s, background .12s;
+  }
+  .list-item .remove-btn:hover {
+    color: var(--uq-red); background: rgba(237,29,36,.08);
+  }
+  .empty-msg { color: var(--muted); font-size: .82rem; font-style: italic; }
+
   /* ── Actions ─────────────────────────────────── */
   .actions {
     position: fixed; bottom: 0; left: 0; right: 0;
@@ -324,6 +344,17 @@ _TEMPLATE = """\
         Uses local system time.
       </div>
 
+      <div class="field" style="margin-top:18px">
+        <label for="server-url">Server URL</label>
+        <div class="help">
+          Base URL of this server for action buttons (Ignore / Watch) in notifications.
+          Use <code>http://localhost:8000</code> if you only access notifications on this machine,
+          or a LAN IP like <code>http://192.168.1.50:8000</code> for other devices on your network.
+          Leave empty to hide action buttons.
+        </div>
+        <input type="text" id="server-url" placeholder="http://localhost:8000"/>
+      </div>
+
     </div>
   </div>
 
@@ -386,20 +417,42 @@ _TEMPLATE = """\
         </div>
       </div>
 
-      <div class="field">
-        <label for="watched-urls">Watched URLs</label>
-        <div class="help">
-          Track specific products regardless of sale status.
-          You get notified when a watched item is in stock, comes
-          back in stock, gets a new size, goes on sale,
-          or changes discount. Open the product on uniqlo.com,
-          pick your colour and size, and paste the full page URL
-          here. One URL per line.
-        </div>
-        <textarea id="watched-urls" rows="4"
-          placeholder="https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=70&amp;sizeDisplayCode=003"></textarea>
-      </div>
+    </div>
+  </div>
 
+  <!-- ── Watched Variants ────────────────────────── -->
+  <div class="section">
+    <div class="section-header">Watched Variants</div>
+    <div class="section-body">
+      <div class="help" style="margin-bottom:12px">
+        Track specific product variants (colour + size) regardless of sale status.
+        Paste a Uniqlo product URL to add, or use the Watch button in notifications.
+      </div>
+      <div id="watched-list"></div>
+      <div class="field" style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="watched-add" style="flex:1"
+          placeholder="Paste a Uniqlo product URL&hellip;"/>
+        <button type="button" class="btn btn-save" style="padding:8px 18px;font-size:.78rem"
+          onclick="addWatchedFromUrl()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Ignored Products ────────────────────────── -->
+  <div class="section">
+    <div class="section-header">Ignored Products</div>
+    <div class="section-body">
+      <div class="help" style="margin-bottom:12px">
+        Products on this list are hidden from all results (any colour/size).
+        Watched variants take precedence over ignored products.
+      </div>
+      <div id="ignored-list"></div>
+      <div class="field" style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="ignored-add" style="flex:1"
+          placeholder="Product URL or ID (e.g. E483049-000)"/>
+        <button type="button" class="btn btn-save" style="padding:8px 18px;font-size:.78rem"
+          onclick="addIgnored()">Add</button>
+      </div>
     </div>
   </div>
 
@@ -576,6 +629,174 @@ _TEMPLATE = """\
     el._tid = setTimeout(function () { el.className = "toast"; }, 4000);
   }
 
+  /* ── watched / ignored list state ─────────────── */
+  var _watchedVariants = [];
+  var _ignoredProducts = [];
+
+  function renderWatchedList(items) {
+    _watchedVariants = items || [];
+    var el = $("watched-list");
+    if (!_watchedVariants.length) {
+      el.innerHTML = '<div class="empty-msg">No watched variants.</div>';
+      return;
+    }
+    el.innerHTML = _watchedVariants.map(function(w, i) {
+      var title = w.name || w.id;
+      var colorStr = w.color_name
+        ? w.color + " " + w.color_name : (w.color || "\u2014");
+      var sizeStr = w.size_name || w.size || "\u2014";
+      var urlLink = w.url
+        ? ' <a href="' + w.url + '" target="_blank" '
+          + 'style="color:var(--muted);font-size:.72rem">\u2197</a>'
+        : "";
+      return '<div class="list-item">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="item-name">' + title + urlLink + '</div>' +
+          '<div class="item-detail">' + w.id +
+            ' &middot; ' + colorStr +
+            ' &middot; ' + sizeStr + '</div>' +
+        '</div>' +
+        '<button type="button" class="remove-btn" ' +
+        'onclick="removeWatched(' + i + ')">&times;</button>' +
+        '</div>';
+    }).join("");
+  }
+
+  function renderIgnoredList(items) {
+    _ignoredProducts = items || [];
+    var el = $("ignored-list");
+    if (!_ignoredProducts.length) {
+      el.innerHTML = '<div class="empty-msg">No ignored products.</div>';
+      return;
+    }
+    el.innerHTML = _ignoredProducts.map(function(p, i) {
+      var title = p.name || p.id;
+      var urlLink = p.url
+        ? ' <a href="' + p.url + '" target="_blank" '
+          + 'style="color:var(--muted);font-size:.72rem">\u2197</a>'
+        : "";
+      var detail = p.name ? p.id : "";
+      return '<div class="list-item">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="item-name">' + title + urlLink + '</div>' +
+          (detail
+            ? '<div class="item-detail">' + detail + '</div>'
+            : '') +
+        '</div>' +
+        '<button type="button" class="remove-btn" ' +
+        'onclick="removeIgnored(' + i + ')">&times;</button>' +
+        '</div>';
+    }).join("");
+  }
+
+  function _saveConfig(onFinally) {
+    fetch("/api/v1/config", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(collect())
+    })
+    .then(function (res) {
+      if (!res.ok) return res.json().then(function (j) {
+        throw new Error(j.detail || "Save failed");
+      });
+      return res.json();
+    })
+    .then(function (data) {
+      showToast("Saved & reloaded!", "success");
+      if (data.config) { CONFIG = data.config; populate(CONFIG); }
+    })
+    .catch(function (err) {
+      showToast("Error: " + err.message, "error");
+    })
+    .finally(onFinally || function(){});
+  }
+
+  window.removeWatched = function(i) {
+    _watchedVariants.splice(i, 1);
+    renderWatchedList(_watchedVariants);
+    _saveConfig();
+  };
+  window.removeIgnored = function(i) {
+    _ignoredProducts.splice(i, 1);
+    renderIgnoredList(_ignoredProducts);
+    _saveConfig();
+  };
+
+  function _parseProductUrl(raw) {
+    var u = new URL(raw);
+    var parts = u.pathname.split("/").filter(Boolean);
+    var pid = "", pg = "00", j = 0;
+    for (; j < parts.length; j++) {
+      if (parts[j] === "products" && j + 1 < parts.length) {
+        pid = parts[j+1];
+        if (j + 2 < parts.length) pg = parts[j+2];
+        break;
+      }
+    }
+    return { pid: pid, pg: pg, params: new URLSearchParams(u.search) };
+  }
+
+  function _verifyAndAdd(productId, onSuccess) {
+    fetch("/api/v1/products/" + encodeURIComponent(productId) + "/verify")
+    .then(function (res) {
+      if (!res.ok) return res.json().then(function (j) {
+        throw new Error(j.detail || "Product not found");
+      });
+      return res.json();
+    })
+    .then(onSuccess)
+    .catch(function (err) {
+      showToast(err.message, "error");
+    });
+  }
+
+  window.addWatchedFromUrl = function() {
+    var raw = val("watched-add").trim();
+    if (!raw) return;
+    try {
+      var parsed = _parseProductUrl(raw);
+      if (!parsed.pid) {
+        showToast("Could not extract product ID from URL", "error");
+        return;
+      }
+      _verifyAndAdd(parsed.pid, function(data) {
+        _watchedVariants.push({
+          url: raw,
+          id: parsed.pid,
+          price_group: parsed.pg,
+          name: data.name || "",
+          color: parsed.params.get("colorDisplayCode") || "",
+          color_name: "",
+          size: parsed.params.get("sizeDisplayCode") || "",
+          size_name: ""
+        });
+        renderWatchedList(_watchedVariants);
+        $("watched-add").value = "";
+        _saveConfig();
+      });
+    } catch(e) {
+      showToast("Invalid URL", "error");
+    }
+  };
+
+  window.addIgnored = function() {
+    var raw = val("ignored-add").trim();
+    if (!raw) return;
+    var id = raw;
+    if (raw.startsWith("http")) {
+      try {
+        var parsed = _parseProductUrl(raw);
+        if (parsed.pid) id = parsed.pid;
+      } catch(e) { /* treat as plain ID */ }
+    }
+    _verifyAndAdd(id, function(data) {
+      _ignoredProducts.push({ id: id, name: data.name || "", url: "" });
+      renderIgnoredList(_ignoredProducts);
+      $("ignored-add").value = "";
+      _saveConfig();
+    });
+  };
+
   /* ── populate form from config ───────────────── */
   function populate(cfg) {
     $("country").value = cfg.uniqlo.country;
@@ -594,7 +815,10 @@ _TEMPLATE = """\
     $("sizes-shoes").value    = (sz.shoes    || []).join(", ");
     $("sizes-one-size").checked = !!sz.one_size;
 
-    $("watched-urls").value = (cfg.filters.watched_urls || []).join("\\n");
+    renderWatchedList(cfg.filters.watched_variants || []);
+    renderIgnoredList(cfg.filters.ignored_products || []);
+
+    $("server-url").value = cfg.server_url || "";
 
     var qh = cfg.quiet_hours || {};
     $("quiet-hours-enabled").checked = !!qh.enabled;
@@ -633,6 +857,7 @@ _TEMPLATE = """\
         check_interval_minutes: parseInt(val("check-interval"), 10) || 15,
         sale_paths: splitCSV(val("sale-paths"))
       },
+      server_url: val("server-url"),
       quiet_hours: {
         enabled: checked("quiet-hours-enabled"),
         start:   val("quiet-hours-start") || "01:00",
@@ -647,7 +872,8 @@ _TEMPLATE = """\
           shoes:    splitCSV(val("sizes-shoes")),
           one_size: checked("sizes-one-size")
         },
-        watched_urls: splitLines(val("watched-urls"))
+        watched_variants: _watchedVariants,
+        ignored_products: _ignoredProducts
       },
       notifications: {
         preview_cli:  checked("preview-cli"),
@@ -680,26 +906,7 @@ _TEMPLATE = """\
     var btn = $("save-btn");
     btn.disabled = true;
     btn.textContent = "Saving\\u2026";
-
-    fetch("/api/v1/config", {
-      method: "PUT",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(collect())
-    })
-    .then(function (res) {
-      if (!res.ok) return res.json().then(function (j) {
-        throw new Error(j.detail || "Unknown error");
-      });
-      return res.json();
-    })
-    .then(function (data) {
-      showToast("Configuration saved & reloaded!", "success");
-      if (data.config) { CONFIG = data.config; populate(CONFIG); }
-    })
-    .catch(function (err) {
-      showToast("Error: " + err.message, "error");
-    })
-    .finally(function () {
+    _saveConfig(function () {
       btn.disabled = false;
       btn.textContent = "Save & Reload";
     });

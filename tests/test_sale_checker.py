@@ -222,15 +222,14 @@ class TestSaleCheckerFiltering:
         assert result[0].available_sizes == ["M"]
 
     def test_watched_size_outside_filter_is_included(self):
-        """A watched URL's size is included even when the global size filter omits it."""
+        """A watched variant's size is included even when the global size filter omits it."""
         config = AppConfig.model_validate({
             "filters": {
                 "gender": ["men"],
                 "min_sale_percentage": 40,
                 "sizes": {"clothing": ["L"]},
-                "watched_urls": [
-                    "https://www.uniqlo.com/de/de/products/E999999-001/00"
-                    "?colorDisplayCode=09&sizeDisplayCode=001",
+                "watched_variants": [
+                    {"id": "E999999-001", "color": "09", "size": "001"},
                 ],
             },
         })
@@ -785,9 +784,8 @@ class TestWatchedProductFetch:
                 "gender": ["men"],
                 "min_sale_percentage": 40,
                 "sizes": {"clothing": ["M"]},
-                "watched_urls": [
-                    "https://www.uniqlo.com/de/de/products/E777-001/00"
-                    "?colorDisplayCode=09&sizeDisplayCode=002",
+                "watched_variants": [
+                    {"id": "E777-001", "color": "09", "size": "002"},
                 ],
             },
         })
@@ -827,9 +825,8 @@ class TestWatchedProductFetch:
                 "gender": ["men"],
                 "min_sale_percentage": 40,
                 "sizes": {"clothing": ["M"]},
-                "watched_urls": [
-                    "https://www.uniqlo.com/de/de/products/E001/00"
-                    "?colorDisplayCode=09&sizeDisplayCode=002",
+                "watched_variants": [
+                    {"id": "E001", "color": "09", "size": "002"},
                 ],
             },
         })
@@ -854,20 +851,18 @@ class TestWatchedProductFetch:
         assert len(result.matching_deals) == 1
 
     @pytest.mark.asyncio
-    async def test_multiple_watched_urls_same_product_fetched_once(
+    async def test_multiple_watched_variants_same_product_fetched_once(
         self, tmp_path: Path,
     ):
-        """Two watched URLs for the same product should trigger only one fetch."""
+        """Two watched variants for the same product should trigger only one fetch."""
         config = AppConfig.model_validate({
             "filters": {
                 "gender": ["men"],
                 "min_sale_percentage": 40,
                 "sizes": {"clothing": ["M"]},
-                "watched_urls": [
-                    "https://www.uniqlo.com/de/de/products/E777-001/00"
-                    "?colorDisplayCode=09&sizeDisplayCode=002",
-                    "https://www.uniqlo.com/de/de/products/E777-001/00"
-                    "?colorDisplayCode=15&sizeDisplayCode=003",
+                "watched_variants": [
+                    {"id": "E777-001", "color": "09", "size": "002"},
+                    {"id": "E777-001", "color": "15", "size": "003"},
                 ],
             },
         })

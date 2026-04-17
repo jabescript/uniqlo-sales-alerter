@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
+import os
 import sys
 
 logging.basicConfig(
@@ -21,12 +21,12 @@ def main() -> None:
     preview_group.add_argument(
         "--preview-cli",
         action="store_true",
-        help="Run a single check, print deals to the terminal, and exit.",
+        help="Enable CLI preview and start the server.",
     )
     preview_group.add_argument(
         "--preview-html",
         action="store_true",
-        help="Run a single check, generate an HTML report with images, and open it in the browser.",
+        help="Enable HTML preview and start the server.",
     )
     preview_group.add_argument(
         "--preview",
@@ -41,43 +41,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.preview or args.preview_cli:
-        asyncio.run(_run_preview(args.config, mode="cli"))
+        os.environ.setdefault("PREVIEW_CLI", "true")
     elif args.preview_html:
-        asyncio.run(_run_preview(args.config, mode="html"))
-    else:
-        _run_server()
+        os.environ.setdefault("PREVIEW_HTML", "true")
 
-
-async def _run_preview(
-    config_path: str | None, *, mode: str,
-) -> None:
-    from uniqlo_sales_alerter.config import load_config
-    from uniqlo_sales_alerter.notifications.base import Notifier
-    from uniqlo_sales_alerter.notifications.console import ConsoleNotifier
-    from uniqlo_sales_alerter.notifications.html_report import HtmlReportNotifier
-    from uniqlo_sales_alerter.services.sale_checker import SaleChecker
-
-    config = load_config(config_path)
-
-    notifier: Notifier
-    if mode == "html":
-        config.notifications.preview_html = True
-        notifier = HtmlReportNotifier(enabled=True)
-    else:
-        config.notifications.preview_cli = True
-        notifier = ConsoleNotifier(enabled=True)
-
-    checker = SaleChecker(config)
-    try:
-        result = await checker.check()
-        await notifier.send(result.matching_deals)
-    finally:
-        await checker.close()
-
-    print(
-        f"  Scanned {result.total_products_scanned} sale items, "
-        f"{len(result.matching_deals)} matched your filters.\n"
-    )
+    _run_server()
 
 
 def _run_server() -> None:

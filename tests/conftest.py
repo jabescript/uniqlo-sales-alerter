@@ -136,8 +136,8 @@ def sale_config() -> AppConfig:
                 "gender": ["men"],
                 "min_sale_percentage": 40,
                 "sizes": {"clothing": ["M", "L"], "pants": ["32inch"]},
-                "watched_urls": [
-                    "https://www.uniqlo.com/de/de/products/E999999-001/00?colorDisplayCode=09&sizeDisplayCode=002",
+                "watched_variants": [
+                    {"id": "E999999-001", "color": "09", "size": "002"},
                 ],
             },
             "notifications": {},

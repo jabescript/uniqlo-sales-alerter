@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+_DEFAULT_CURRENCY = "€"
+
 # ---------------------------------------------------------------------------
 # Uniqlo Commerce API response models (partial — only fields we need)
 # ---------------------------------------------------------------------------
@@ -81,8 +83,8 @@ class UniqloProduct(BaseModel, populate_by_name=True):
     @property
     def currency_symbol(self) -> str:
         if self.prices.base.currency:
-            return self.prices.base.currency.get("symbol", "€")
-        return "€"
+            return self.prices.base.currency.get("symbol", _DEFAULT_CURRENCY)
+        return _DEFAULT_CURRENCY
 
 
 class UniqloPagination(BaseModel):
@@ -113,7 +115,7 @@ class SaleItem(BaseModel):
     name: str
     original_price: float
     sale_price: float
-    currency_symbol: str = "€"
+    currency_symbol: str = _DEFAULT_CURRENCY
     discount_percentage: float
     gender: str
     available_sizes: list[str]

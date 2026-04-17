@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.models.products import SaleItem
+from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
 
 if TYPE_CHECKING:
     from uniqlo_sales_alerter.config import TelegramChannelConfig
@@ -37,12 +38,11 @@ def _build_caption(deal: SaleItem) -> str:
         for sz, url in zip(deal.available_sizes, deal.product_urls)
     )
 
-    _repo = "https://github.com/kequach/uniqlo-sales-alerter"
     lines = [
         f"*{name}*",
         price_line,
         size_links or _escape_md(", ".join(deal.available_sizes)),
-        f"\n[Uniqlo Sales Alerter]({_repo})",
+        f"\n[Uniqlo Sales Alerter]({PROJECT_URL})",
     ]
     if deal.is_watched:
         lines.insert(0, "⭐ *Watched item*")
@@ -52,8 +52,9 @@ def _build_caption(deal: SaleItem) -> str:
 class TelegramNotifier:
     """Sends deal notifications via Telegram Bot API."""
 
-    def __init__(self, config: TelegramChannelConfig) -> None:
+    def __init__(self, config: TelegramChannelConfig, *, server_url: str = "") -> None:
         self._config = config
+        self._server_url = server_url
 
     def is_enabled(self) -> bool:
         return self._config.enabled and bool(self._config.bot_token) and bool(self._config.chat_id)
@@ -68,11 +69,25 @@ class TelegramNotifier:
             logger.error("python-telegram-bot is not installed; skipping Telegram notifications")
             return
 
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         bot = Bot(token=self._config.bot_token)
         chat_id = self._config.chat_id
 
         for deal in deals:
             caption = _build_caption(deal)
+            actions = DealActions(deal, self._server_url)
+            markup = None
+            if actions.ignore_url:
+                rows = [
+                    [InlineKeyboardButton(
+                        f"Watch {sz}", url=wurl,
+                    )]
+                    for sz, wurl in actions.watch_urls
+                ]
+                rows.append([InlineKeyboardButton(
+                    "Ignore", url=actions.ignore_url,
+                )])
+                markup = InlineKeyboardMarkup(rows)
             try:
                 if deal.image_url:
                     await bot.send_photo(
@@ -80,12 +95,14 @@ class TelegramNotifier:
                         photo=deal.image_url,
                         caption=caption,
                         parse_mode="MarkdownV2",
+                        reply_markup=markup,
                     )
                 else:
                     await bot.send_message(
                         chat_id=chat_id,
                         text=caption,
                         parse_mode="MarkdownV2",
+                        reply_markup=markup,
                     )
             except Exception:
                 logger.exception("Failed to send Telegram message for %s", deal.product_id)

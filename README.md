@@ -91,6 +91,7 @@ docker run -d \
   -e FILTER_GENDER=men,women \
   -e FILTER_MIN_SALE_PERCENTAGE=30 \
   -e FILTER_SIZES_CLOTHING=S,M,L \
+  -e SERVER_URL=http://192.168.1.50:8000 \
   -e EMAIL_ENABLED=true \
   -e SMTP_USER=you@gmail.com \
   -e SMTP_PASSWORD=your-app-password \
@@ -134,7 +135,7 @@ The server runs on `http://localhost:8000` with the [web UI](#web-ui) at `/setti
 
 The built-in settings page at **`/settings`** lets you view and edit the entire configuration in your browser. Changes are saved to `config.yaml` (preserving comments) and applied immediately — no restart required.
 
-It covers all settings: country, check interval, sale paths, quiet hours, gender/size filters, watched URLs, notification modes, and Telegram/email channels. Secret fields (bot token, SMTP password) are masked; leaving them as `***` keeps the existing value. Available whenever the server is running, regardless of how you started the alerter.
+It covers all settings: country, check interval, quiet hours, server URL, gender/size filters, watched variants, ignored products, notification modes, and Telegram/email channels. Adding or removing watched variants and ignored products saves immediately — no need to click "Save & Reload". Other settings (filters, intervals, credentials) are saved when you click the button. Secret fields (bot token, SMTP password) are masked; leaving them as `***` keeps the existing value. Available whenever the server is running, regardless of how you started the alerter.
 
 ## Configuration
 
@@ -210,11 +211,11 @@ A product passes if it has **at least one** in-stock size matching any configure
 
 </details>
 
-### Watched products
+### Watched variants
 
-Have your eye on a specific item that isn't on sale yet? Add its URL to `watched_urls` and the alerter will monitor it alongside the sale catalogue. Watched products bypass all sale, discount, gender, and size filters — they only need to be purchasable.
+Have your eye on a specific item that isn't on sale yet? Add it to `watched_variants` and the alerter will monitor it alongside the sale catalogue. Watched variants bypass all sale, discount, gender, and size filters — they only need to be purchasable.
 
-A notification is triggered when a watched product:
+A notification is triggered when a watched variant:
 
 - is **in stock** for the first time (or comes **back in stock** after being unavailable)
 - gets a **new size** available for purchase
@@ -223,15 +224,46 @@ A notification is triggered when a watched product:
 
 Once you've been notified about a specific variant, you won't be notified again until something changes — same rules as regular deals.
 
-To get the URL, open the product on uniqlo.com, select your preferred **colour** and **size**, then copy the page URL. The alerter extracts the colour and size codes and prefers them during stock checks. The watched size is included even if it falls outside your normal size filter.
+To add a watched variant, paste the full Uniqlo product URL (with your preferred colour and size selected). The product ID, colour, size, and price group are parsed automatically. In the **web UI**, paste the URL into the input field — in `config.yaml`, add it as a `url` entry:
 
 ```yaml
 filters:
-  watched_urls:
-    - "https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003"
+  watched_variants:
+    - url: "https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003"
 ```
 
-Watched items appear with a **WATCHED** badge in notifications.
+On startup the alerter resolves human-readable metadata (product name, colour name like "09 Schwarz", size name like "M") from the Uniqlo API and saves it back to `config.yaml`. The settings UI shows the enriched data alongside the product URL.
+
+Watched items appear with a **WATCHED** badge in notifications. Legacy `watched_urls` entries are auto-migrated to the new format on startup.
+
+### Ignored products
+
+Products on the ignore list are hidden from all results, regardless of sale status, colour, or size. Use this to suppress items you're not interested in. You can add products by ID or by pasting a product URL:
+
+```yaml
+filters:
+  ignored_products:
+    - id: "E483049-000"
+```
+
+Product names are resolved automatically from the API on startup, just like watched variants. Watched variants take precedence over ignored products — if a specific variant is watched, it is shown even if the product is on the ignore list.
+
+### Server URL and action buttons
+
+When `server_url` is configured, each notification includes **Ignore** and **Watch** action buttons. The Ignore button applies to the entire product; the Watch button appears per size so you can choose exactly which variant to track.
+
+```yaml
+server_url: "http://192.168.1.50:8000"
+```
+
+| Channel | How it works |
+|---------|-------------|
+| **HTML report** | Star icon (☆) next to each size chip to watch that variant; Ignore button below the card. |
+| **Telegram** | Inline keyboard buttons — one "Watch {size}" button per available size, plus "Ignore". |
+| **Email** | Per-size "Watch {size}" links and an "Ignore" link in each deal row. |
+| **Console** | Clickable URLs printed below each deal. |
+
+Set this to the address other devices on your network can reach the server at. For remote access, use a domain name or tunnel service. The server must be reachable from the device opening the notification link. Leave empty to hide action buttons.
 
 ### Sale category paths
 
@@ -377,7 +409,9 @@ Every config option can be set via environment variables for initial bootstrappi
 | `FILTER_SIZES_PANTS` | comma-separated | `filters.sizes.pants` |
 | `FILTER_SIZES_SHOES` | comma-separated | `filters.sizes.shoes` |
 | `FILTER_SIZES_ONE_SIZE` | true/false | `filters.sizes.one_size` |
-| `FILTER_WATCHED_URLS` | comma-separated | `filters.watched_urls` |
+| `FILTER_WATCHED_URLS` | comma-separated | `filters.watched_urls` (auto-migrated to `watched_variants`) |
+| `FILTER_IGNORED_IDS` | comma-separated | `filters.ignored_products` (IDs only, names blank) |
+| `SERVER_URL` | string | `server_url` |
 | `NOTIFY_ON` | string | `notifications.notify_on` |
 | `PREVIEW_CLI` | true/false | `notifications.preview_cli` |
 | `PREVIEW_HTML` | true/false | `notifications.preview_html` |
@@ -505,11 +539,11 @@ sudo systemctl restart uniqlo-alerter  # restart
 
 ## Preview Modes
 
-Preview modes let you see matching deals locally without sending notifications.
+Preview modes let you see matching deals locally without sending notifications. The server stays running so action buttons (Ignore / Watch) remain functional.
 
 ```bash
-python -m uniqlo_sales_alerter --preview-cli    # terminal output
-python -m uniqlo_sales_alerter --preview-html   # HTML report in browser
+python -m uniqlo_sales_alerter --preview-cli    # terminal output + server
+python -m uniqlo_sales_alerter --preview-html   # HTML report in browser + server
 ```
 
 Previews can also run alongside the server by enabling `preview_cli` or `preview_html` in the [web UI](#web-ui) or `config.yaml`.
@@ -558,6 +592,8 @@ The server exposes a JSON API alongside the web UI. Interactive docs (Swagger UI
 | `GET` | `/api/v1/products/{id}` | Look up a specific product |
 | `GET` | `/api/v1/config` | Current configuration (secrets redacted) |
 | `PUT` | `/api/v1/config` | Update configuration (save & reload) |
+| `GET` | `/actions/ignore/{id}` | Add a product to the ignore list (browser action, returns HTML) |
+| `GET` | `/actions/watch/{id}` | Add a variant to the watch list (browser action, returns HTML) |
 
 ## Development
 

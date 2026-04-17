@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
@@ -19,7 +19,7 @@ from uniqlo_sales_alerter.models.products import (
 )
 
 if TYPE_CHECKING:
-    from uniqlo_sales_alerter.config import AppConfig
+    from uniqlo_sales_alerter.config import AppConfig, WatchedVariant
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +28,6 @@ _MAX_STOCK_CONCURRENCY = 10
 _DEFAULT_STATE_PATH = Path(
     os.environ.get("STATE_FILE", Path.cwd() / ".seen_variants.json"),
 )
-
-
-class _WatchedVariant(NamedTuple):
-    """A single colour+size variant parsed from a watched URL."""
-
-    product_id: str
-    url: str
-    color: str
-    size_code: str
 
 
 class SaleChecker:
@@ -52,14 +43,22 @@ class SaleChecker:
         self._client = UniqloClient(config)
         self.last_result: SaleCheckResult | None = None
         self._state_path = state_file or _DEFAULT_STATE_PATH
-        self._watched_ids, self._watched_by_product = self._parse_watched_urls(
-            config.filters.watched_urls,
+        self._watched_ids, self._watched_by_product = self._index_watched(
+            config.filters.watched_variants,
         )
+        self._ignored_ids: set[str] = {
+            p.id.upper() for p in config.filters.ignored_products
+        }
         self._seen_variants: set[str] = (
             self._load_state()
             if config.notifications.notify_on == "new_deals"
             else set()
         )
+
+    @property
+    def http_client(self) -> UniqloClient:
+        """The underlying Uniqlo API client."""
+        return self._client
 
     async def close(self) -> None:
         """Release underlying HTTP resources."""
@@ -78,7 +77,13 @@ class SaleChecker:
                 "Loaded %d seen variants from %s", len(variants), self._state_path,
             )
             return set(variants)
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        except FileNotFoundError:
+            logger.debug("No state file at %s — starting fresh", self._state_path)
+            return set()
+        except (json.JSONDecodeError, KeyError):
+            logger.warning(
+                "Corrupt state file %s — starting fresh", self._state_path,
+            )
             return set()
 
     def _save_state(self, variants: set[str]) -> None:
@@ -137,7 +142,7 @@ class SaleChecker:
         # items are still genuinely on sale — we keep them and mark them
         # as unknown-discount downstream.
 
-        # Watched products are included whenever they're in stock, even when
+        # Watched variants are included whenever they're in stock, even when
         # not on sale.  Fetch any watched IDs missing from the sale results.
         all_products: list[UniqloProduct] = list(sale_products)
         if self._watched_ids:
@@ -147,7 +152,7 @@ class SaleChecker:
                 to_fetch: set[str] = set()
                 for pid_upper in missing_upper:
                     for wv in self._watched_by_product.get(pid_upper, []):
-                        to_fetch.add(wv.product_id)
+                        to_fetch.add(wv.id)
                 watched_extra = await self._client.fetch_products_by_ids(
                     sorted(to_fetch),
                 )
@@ -186,45 +191,40 @@ class SaleChecker:
         return result
 
     # ------------------------------------------------------------------
-    # Watched-URL parsing
+    # Watched / ignored helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_watched_urls(
-        urls: list[str],
-    ) -> tuple[set[str], dict[str, list[_WatchedVariant]]]:
-        """Parse watched URLs into a product-ID set and a per-product variant map.
+    def _index_watched(
+        variants: list[WatchedVariant],
+    ) -> tuple[set[str], dict[str, list[WatchedVariant]]]:
+        """Index watched variants into a product-ID set and per-product map.
 
         Returns ``(watched_ids_upper, {product_id_upper: [variant, …]})``.
         """
-        by_product: dict[str, list[_WatchedVariant]] = {}
-        for url in urls:
-            parsed = urlparse(url)
-            parts = [p for p in parsed.path.split("/") if p]
-            pid = ""
-            for i, segment in enumerate(parts):
-                if segment == "products" and i + 1 < len(parts):
-                    pid = parts[i + 1]
-                    break
-            if not pid:
-                logger.warning("Could not extract product ID from watched URL: %s", url)
-                continue
-            params = parse_qs(parsed.query)
-            variant = _WatchedVariant(
-                product_id=pid,
-                url=url,
-                color=params.get("colorDisplayCode", [""])[0],
-                size_code=params.get("sizeDisplayCode", [""])[0],
-            )
-            by_product.setdefault(pid.upper(), []).append(variant)
+        by_product: dict[str, list[WatchedVariant]] = {}
+        for wv in variants:
+            by_product.setdefault(wv.id.upper(), []).append(wv)
         return set(by_product.keys()), by_product
+
+    @staticmethod
+    def _matches_any(product_id: str, id_set: set[str]) -> bool:
+        """Check if *product_id* matches any entry in *id_set* (prefix match)."""
+        pid = product_id.upper()
+        return any(pid.startswith(w) for w in id_set)
+
+    def _is_ignored(self, product_id: str) -> bool:
+        return self._matches_any(product_id, self._ignored_ids)
 
     # ------------------------------------------------------------------
     # Filtering
     # ------------------------------------------------------------------
 
     def _apply_filters(self, products: list[UniqloProduct]) -> list[SaleItem]:
-        """Apply gender, size, and discount filters; always include watched products.
+        """Apply gender, size, discount, and ignore filters.
+
+        Watched variants are always included.  Ignored products are skipped
+        unless they have a watched variant (watched takes precedence).
 
         Items without a known discount (``promo >= base``, common in US/CA/JP/
         KR/SG) bypass the ``min_sale_percentage`` filter but still must pass
@@ -238,6 +238,10 @@ class SaleChecker:
 
         for product in products:
             is_watched = self._is_watched(product.product_id, watched)
+
+            if self._is_ignored(product.product_id) and not is_watched:
+                continue
+
             has_known_discount = product.is_on_sale
             passes_discount = (
                 not has_known_discount
@@ -264,7 +268,7 @@ class SaleChecker:
         product: UniqloProduct,
         is_watched: bool,
         size_filter: set[str],
-        watched_variants: list[_WatchedVariant] | None = None,
+        watched_variants: list[WatchedVariant] | None = None,
     ) -> SaleItem:
         rating = product.rating
         matched_sizes = self._matching_sizes(product, size_filter)
@@ -274,17 +278,24 @@ class SaleChecker:
         final_urls = list(urls)
 
         if watched_variants:
+            base = self._config.product_page_base
+            pid = product.product_id
+            pg = product.price_group
             code_to_name = {s.display_code: s.name for s in product.sizes}
             for wv in watched_variants:
-                size_name = code_to_name.get(wv.size_code)
+                size_name = code_to_name.get(wv.size)
                 if size_name is None:
                     continue
+                wv_url = (
+                    f"{base}/{pid}/{pg}"
+                    f"?colorDisplayCode={wv.color}&sizeDisplayCode={wv.size}"
+                )
                 if size_name in final_sizes:
                     idx = final_sizes.index(size_name)
-                    final_urls[idx] = wv.url
+                    final_urls[idx] = wv_url
                 else:
                     final_sizes.append(size_name)
-                    final_urls.append(wv.url)
+                    final_urls.append(wv_url)
 
         return SaleItem(
             product_id=product.product_id,
@@ -317,8 +328,7 @@ class SaleChecker:
 
     @staticmethod
     def _is_watched(product_id: str, watched: set[str]) -> bool:
-        pid = product_id.upper()
-        return any(pid.startswith(w) for w in watched)
+        return SaleChecker._matches_any(product_id, watched)
 
     @staticmethod
     def _matches_gender(product: UniqloProduct, gender_filter: set[str]) -> bool:
@@ -422,7 +432,7 @@ class SaleChecker:
         wanted = {s.upper() for s in item.available_sizes}
         base = self._config.product_page_base
 
-        # Build a size-name → preferred-color map from watched URLs.
+        # Build a size-name → preferred-color map from watched variants.
         watched = self._watched_by_product.get(item.product_id.upper(), [])
         code_to_name: dict[str, str] = {}
         for l2 in l2s:
@@ -430,7 +440,7 @@ class SaleChecker:
             code_to_name[sz.get("displayCode", "")] = sz.get("name", "")
         preferred_colors: dict[str, str] = {}
         for wv in watched:
-            sn = code_to_name.get(wv.size_code, "").upper()
+            sn = code_to_name.get(wv.size, "").upper()
             if sn and wv.color:
                 preferred_colors[sn] = wv.color
 

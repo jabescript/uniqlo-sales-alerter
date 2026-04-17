@@ -8,11 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from uniqlo_sales_alerter.models.products import SaleItem
+from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
 
 logger = logging.getLogger(__name__)
 
 
-def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
+def _build_report(
+    deals: list[SaleItem], generated_at: datetime, server_url: str = "",
+) -> str:
     """Build a self-contained HTML page styled in Uniqlo corporate identity."""
     cards: list[str] = []
     for i, deal in enumerate(deals, 1):
@@ -25,10 +28,19 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
             if deal.image_url
             else '<div class="no-img">No image</div>'
         )
-        size_links = " ".join(
-            f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
-            for sz, url in zip(deal.available_sizes, deal.product_urls)
-        ) or ", ".join(deal.available_sizes)
+        actions = DealActions(deal, server_url)
+        watch_map = dict(actions.watch_urls)
+        size_parts: list[str] = []
+        for sz, url in zip(deal.available_sizes, deal.product_urls):
+            chip = f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
+            wurl = watch_map.get(sz)
+            if wurl:
+                chip += (
+                    f'<a class="watch-chip" href="{wurl}" '
+                    f'target="_blank" title="Watch {sz}">&#9734;</a>'
+                )
+            size_parts.append(chip)
+        size_links = " ".join(size_parts) or ", ".join(deal.available_sizes)
 
         if deal.has_known_discount:
             price_row = (
@@ -43,6 +55,16 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
                 f'<span class="discount">Sale</span>'
             )
 
+        action_row = ""
+        if actions.ignore_url:
+            action_row = (
+                '<div class="actions-row">'
+                f'<a class="action-btn action-ignore" '
+                f'href="{actions.ignore_url}" '
+                f'target="_blank">Ignore</a>'
+                '</div>'
+            )
+
         cards.append(f"""
         <div class="card">
             <div class="card-img">{img}</div>
@@ -54,6 +76,7 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
                     {price_row}
                 </div>
                 <div class="sizes">{size_links}</div>
+                {action_row}
             </div>
         </div>""")
 
@@ -197,6 +220,31 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
     background: var(--uq-red); color: #fff;
   }}
 
+  /* ── Watch chip (per-size star) ───────────────── */
+  .watch-chip {{
+    display: inline-block; margin-left: 2px;
+    padding: 4px 5px; font-size: .72rem;
+    text-decoration: none; color: var(--muted);
+    border-radius: 2px; vertical-align: middle;
+    transition: color .12s;
+  }}
+  .watch-chip:hover {{ color: var(--uq-red); }}
+
+  /* ── Action buttons ─────────────────────────────── */
+  .actions-row {{
+    display: flex; gap: 8px; margin-top: 6px;
+  }}
+  .action-btn {{
+    display: inline-block; padding: 3px 10px;
+    border-radius: 2px; font-size: .68rem; font-weight: 700;
+    text-decoration: none; text-transform: uppercase;
+    letter-spacing: .03em; transition: opacity .12s;
+  }}
+  .action-btn:hover {{ opacity: .8; }}
+  .action-ignore {{
+    background: var(--border); color: var(--text);
+  }}
+
   /* ── Footer ─────────────────────────────────────── */
   footer {{
     text-align: center; color: var(--muted);
@@ -219,7 +267,7 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
 <div class="grid">
 {"".join(cards)}
 </div>
-<footer>Powered by <a href="https://github.com/kequach/uniqlo-sales-alerter"
+<footer>Powered by <a href="{PROJECT_URL}"
   style="text-decoration:none;color:inherit;"><span>UNIQLO</span> Sales Alerter</a></footer>
 </body>
 </html>"""
@@ -228,9 +276,16 @@ def _build_report(deals: list[SaleItem], generated_at: datetime) -> str:
 class HtmlReportNotifier:
     """Generates an HTML report file and opens it in the default browser."""
 
-    def __init__(self, *, enabled: bool = True, output_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        output_dir: str | None = None,
+        server_url: str = "",
+    ) -> None:
         self._enabled = enabled
         self._output_dir = output_dir
+        self._server_url = server_url
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -241,7 +296,7 @@ class HtmlReportNotifier:
             return
 
         now = datetime.now(timezone.utc)
-        html = _build_report(deals, now)
+        html = _build_report(deals, now, server_url=self._server_url)
 
         if self._output_dir:
             out = Path(self._output_dir)

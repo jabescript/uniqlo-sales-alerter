@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.models.products import SaleItem
+from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
 
 if TYPE_CHECKING:
     from uniqlo_sales_alerter.config import EmailChannelConfig
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 _SMTP_TIMEOUT = 30
 
 
-def _build_html(deals: list[SaleItem]) -> str:
+def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
     rows: list[str] = []
     for deal in deals:
         watched_badge = ' <span style="color:gold;">⭐ Watched</span>' if deal.is_watched else ""
@@ -45,6 +46,21 @@ def _build_html(deals: list[SaleItem]) -> str:
                 f'{deal.currency_symbol}{deal.sale_price:.2f}</span> '
                 f'<span style="color:#27ae60;font-weight:bold;">Sale</span>'
             )
+        actions = DealActions(deal, server_url)
+        action_html = ""
+        if actions.ignore_url:
+            watch_links = " &middot; ".join(
+                f'<a href="{wurl}" style="color:#c0392b;">'
+                f'Watch {sz}</a>'
+                for sz, wurl in actions.watch_urls
+            )
+            action_html = (
+                '<br/><small>'
+                f'<a href="{actions.ignore_url}" style="color:#999;">'
+                f'Ignore</a>'
+                + (' &middot; ' + watch_links if watch_links else '')
+                + '</small>'
+            )
         rows.append(
             f"""
             <tr style="border-bottom:1px solid #eee;">
@@ -53,6 +69,7 @@ def _build_html(deals: list[SaleItem]) -> str:
                     <strong>{deal.name}</strong>{watched_badge}<br/>
                     {price_html}<br/>
                     <small>Sizes: {size_links}</small>
+                    {action_html}
                 </td>
             </tr>"""
         )
@@ -64,7 +81,7 @@ def _build_html(deals: list[SaleItem]) -> str:
         {"".join(rows)}
     </table>
     <p style="color:#999;font-size:12px;">
-        Sent by <a href="https://github.com/kequach/uniqlo-sales-alerter"
+        Sent by <a href="{PROJECT_URL}"
         style="color:#999;">Uniqlo Sales Alerter</a>
     </p>
     </body></html>
@@ -74,8 +91,9 @@ def _build_html(deals: list[SaleItem]) -> str:
 class EmailNotifier:
     """Sends deal notifications via SMTP email."""
 
-    def __init__(self, config: EmailChannelConfig) -> None:
+    def __init__(self, config: EmailChannelConfig, *, server_url: str = "") -> None:
         self._config = config
+        self._server_url = server_url
 
     def is_enabled(self) -> bool:
         return (
@@ -116,7 +134,7 @@ class EmailNotifier:
         msg["Subject"] = f"Uniqlo Sale Alert — {len(deals)} deal(s)"
         msg["From"] = cfg.from_address
         msg["To"] = ", ".join(cfg.to_addresses)
-        msg.attach(MIMEText(_build_html(deals), "html"))
+        msg.attach(MIMEText(_build_html(deals, self._server_url), "html"))
 
         try:
             await aiosmtplib.send(

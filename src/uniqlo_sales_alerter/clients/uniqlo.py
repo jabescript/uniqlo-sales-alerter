@@ -24,6 +24,7 @@ MAX_CONNECTIONS = 10
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 _DEFAULT_RATE_LIMIT_WAIT = 5.0
 _MAX_RATE_LIMIT_WAIT = 60.0
+_HTTP_FAILURE_PARAMS = {"httpFailure": "true"}
 
 
 def _backoff_seconds(attempt: int, *, jitter: bool = True) -> float:
@@ -77,8 +78,8 @@ def _normalize_v3_product(raw: dict[str, Any]) -> dict[str, Any]:
         main_dict: dict[str, dict[str, Any]] = {}
         for entry in main_list:
             if isinstance(entry, dict) and "url" in entry:
-                cc = entry.get("colorCode", "00")
-                main_dict[cc] = {"image": entry["url"]}
+                color_code = entry.get("colorCode", "00")
+                main_dict[color_code] = {"image": entry["url"]}
         images["main"] = main_dict
         product["images"] = images
 
@@ -294,7 +295,7 @@ class UniqloClient:
         try:
             resp = await self._request(
                 url,
-                params={"httpFailure": "true"},
+                params=_HTTP_FAILURE_PARAMS,
                 label=f"L2s({product_id})",
             )
             data = resp.json()
@@ -318,7 +319,7 @@ class UniqloClient:
         try:
             resp = await self._request(
                 url,
-                params={"httpFailure": "true"},
+                params=_HTTP_FAILURE_PARAMS,
                 label=f"stock({product_id})",
             )
             data = resp.json()
@@ -369,7 +370,7 @@ class UniqloClient:
         params: dict[str, Any] = {
             "offset": offset,
             "limit": PAGE_SIZE,
-            "httpFailure": "true",
+            **_HTTP_FAILURE_PARAMS,
         }
         if extra_params:
             params.update(extra_params)
@@ -429,7 +430,7 @@ class UniqloClient:
         params: dict[str, Any] = {
             "offset": offset,
             "limit": PAGE_SIZE,
-            "httpFailure": "true",
+            **_HTTP_FAILURE_PARAMS,
         }
         if extra_params:
             params.update(extra_params)
@@ -453,6 +454,6 @@ class UniqloClient:
 
         except Exception:
             logger.debug(
-                "v3 page fetch at offset %d returned no results", offset,
+                "v3 page fetch at offset %d failed", offset, exc_info=True,
             )
             return None

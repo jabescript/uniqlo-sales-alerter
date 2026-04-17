@@ -13,9 +13,21 @@ from uniqlo_sales_alerter.notifications.html_report import HtmlReportNotifier
 from uniqlo_sales_alerter.notifications.telegram import TelegramNotifier
 
 if TYPE_CHECKING:
-    from uniqlo_sales_alerter.config import AppConfig
+    from uniqlo_sales_alerter.config import AppConfig, EmailChannelConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _log_email_disabled(cfg: EmailChannelConfig) -> None:
+    """Log why the email notifier is disabled."""
+    checks = [
+        (cfg.enabled, "enabled: false"),
+        (cfg.smtp_host, "smtp_host is empty"),
+        (cfg.from_address, "from_address is empty"),
+        (cfg.to_addresses, "to_addresses is empty"),
+    ]
+    reasons = [msg for ok, msg in checks if not ok]
+    logger.info("Email disabled because: %s", ", ".join(reasons))
 
 
 class NotificationDispatcher:
@@ -35,31 +47,25 @@ class NotificationDispatcher:
         channels = ncfg.channels
         notifiers: list[Notifier] = []
 
-        tg = TelegramNotifier(channels.telegram)
+        server_url = config.server_url.rstrip("/")
+
+        tg = TelegramNotifier(channels.telegram, server_url=server_url)
         notifiers.append(tg)
         logger.info("Registered TelegramNotifier (enabled=%s)", tg.is_enabled())
 
-        em = EmailNotifier(channels.email)
+        em = EmailNotifier(channels.email, server_url=server_url)
         notifiers.append(em)
         logger.info("Registered EmailNotifier (enabled=%s)", em.is_enabled())
         if not em.is_enabled():
-            cfg = channels.email
-            reasons: list[str] = []
-            if not cfg.enabled:
-                reasons.append("enabled: false")
-            if not cfg.smtp_host:
-                reasons.append("smtp_host is empty")
-            if not cfg.from_address:
-                reasons.append("from_address is empty")
-            if not cfg.to_addresses:
-                reasons.append("to_addresses is empty")
-            logger.info("Email disabled because: %s", ", ".join(reasons))
+            _log_email_disabled(channels.email)
 
         if ncfg.preview_cli:
-            notifiers.append(ConsoleNotifier(enabled=True))
+            notifiers.append(ConsoleNotifier(enabled=True, server_url=server_url))
             logger.info("Registered ConsoleNotifier (preview_cli)")
         if ncfg.preview_html:
-            notifiers.append(HtmlReportNotifier(enabled=True))
+            notifiers.append(
+                HtmlReportNotifier(enabled=True, server_url=server_url),
+            )
             logger.info("Registered HtmlReportNotifier (preview_html)")
 
         return notifiers

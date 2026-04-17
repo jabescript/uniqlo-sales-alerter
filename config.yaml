@@ -60,16 +60,47 @@ filters:
     - '42.5'
     one_size: true
 
-  # Full Uniqlo product URLs to always include when available in stock,
-  # even if the item is not on sale.  The colour and size from each URL are
-  # preferred during stock verification, and the watched size is included
-  # even when it falls outside your size filter.
-  watched_urls:
-  - https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=70&sizeDisplayCode=003
-  - https://www.uniqlo.com/de/de/products/E469830-000/00?colorDisplayCode=09&sizeDisplayCode=003
-  - https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=38&sizeDisplayCode=360
-  - https://www.uniqlo.com/de/de/products/E482815-000/00?colorDisplayCode=09&sizeDisplayCode=360
-  - https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003
+  # Specific product variants (colour + size) to always include when in
+  # stock, even if the item is not on sale.  Paste the full Uniqlo product
+  # URL — product ID, colour, size, and price group are extracted
+  # automatically.  Human-readable names (product name, colour name, size
+  # name) are resolved from the API on startup and saved back here.
+  watched_variants:
+  - url: 
+      https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003
+    id: E483045-000
+    price_group: '00'
+    name: Satin Rock (lang)
+    color: '70'
+    color_name: HELLES LILA
+    size: '003'
+    size_name: S
+  - url: 
+      https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=39&sizeDisplayCode=004
+    id: E483049-000
+    price_group: '00'
+    name: Satin Bluse (oversized, kurz, Halbarm)
+    color: '39'
+    color_name: DUNKELBRAUN
+    size: '004'
+    size_name: M
+  ignored_products:
+  - id: E481518-000
+    url: https://www.uniqlo.com/de/de/products/E481518-000/00
+    name: Bundfaltenhose (Wide Fit, Jersey Velours, lang)
+  - id: E485255-000
+    url: https://www.uniqlo.com/de/de/products/E485255-000/00
+    name: ZOOTROPOLIS UT T-Shirt
+  # DEPRECATED — use watched_variants above instead.  Any URLs listed here
+  # are automatically migrated to watched_variants on startup and this list
+  # is cleared.  The FILTER_WATCHED_URLS env var still works the same way.
+  watched_urls: []
+
+# Base URL of this server, used to build action links (Ignore / Watch)
+# in notifications.  Set to the address other devices can reach, e.g.
+# "http://192.168.1.50:8000", "http://localhost:8000" or "https://alerts.example.com".
+# Leave empty to hide action buttons from notifications.
+server_url: "http://localhost:8000"
 
 quiet_hours:
   # Suppress all API calls and notifications during this daily window.

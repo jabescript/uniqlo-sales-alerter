@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 
@@ -63,6 +63,9 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("FILTER_SIZES_SHOES",          ["filters", "sizes", "shoes"],               "list"),
     ("FILTER_SIZES_ONE_SIZE",       ["filters", "sizes", "one_size"],            "bool"),
     ("FILTER_WATCHED_URLS",         ["filters", "watched_urls"],                 "list"),
+    ("FILTER_IGNORED_IDS",          ["filters", "ignored_products"],             "list"),
+    # -- server --
+    ("SERVER_URL",                  ["server_url"],                              "str"),
     # -- notifications --
     ("NOTIFY_ON",                   ["notifications", "notify_on"],              "str"),
     ("PREVIEW_CLI",                 ["notifications", "preview_cli"],            "bool"),
@@ -151,11 +154,95 @@ class SizeFilters(BaseModel):
     one_size: bool = False
 
 
+def parse_uniqlo_url(url: str) -> dict[str, str]:
+    """Extract product fields from a Uniqlo product URL."""
+    from urllib.parse import parse_qs, urlparse
+    parsed = urlparse(url)
+    parts = [p for p in parsed.path.split("/") if p]
+    pid = pg = ""
+    for i, seg in enumerate(parts):
+        if seg == "products" and i + 1 < len(parts):
+            pid = parts[i + 1]
+            if i + 2 < len(parts):
+                pg = parts[i + 2]
+            break
+    params = parse_qs(parsed.query)
+    return {
+        "id": pid,
+        "price_group": pg or "00",
+        "color": params.get("colorDisplayCode", [""])[0],
+        "size": params.get("sizeDisplayCode", [""])[0],
+    }
+
+
+class WatchedVariant(BaseModel):
+    """A specific product colour+size combination to always track."""
+    url: str = ""
+    id: str = ""
+    price_group: str = "00"
+    name: str = ""
+    color: str = ""
+    color_name: str = ""
+    size: str = ""
+    size_name: str = ""
+
+    @model_validator(mode="after")
+    def _fill_from_url(self) -> "WatchedVariant":
+        """Parse ``id``, ``color``, ``size``, ``price_group`` from the URL."""
+        if self.url and not self.id:
+            fields = parse_uniqlo_url(self.url)
+            self.id = fields["id"]
+            self.price_group = fields["price_group"]
+            self.color = self.color or fields["color"]
+            self.size = self.size or fields["size"]
+        return self
+
+
+class IgnoredProduct(BaseModel):
+    """A product to suppress from all results (any colour/size)."""
+    id: str = ""
+    url: str = ""
+    name: str = ""
+
+    @model_validator(mode="after")
+    def _fill_from_url(self) -> "IgnoredProduct":
+        """Extract product ID from a URL if ``id`` is blank."""
+        if self.url and not self.id:
+            fields = parse_uniqlo_url(self.url)
+            self.id = fields["id"]
+        return self
+
+
 class FilterConfig(BaseModel):
     gender: list[str] = Field(default_factory=lambda: ["men", "women"])
     min_sale_percentage: float = Field(default=50.0, ge=0, le=100)
     sizes: SizeFilters = Field(default_factory=SizeFilters)
+    watched_variants: list[WatchedVariant] = Field(default_factory=list)
+    ignored_products: list[IgnoredProduct] = Field(default_factory=list)
     watched_urls: list[str] = Field(default_factory=list)
+
+    @field_validator("ignored_products", mode="before")
+    @classmethod
+    def _coerce_ignored(cls, v: Any) -> Any:
+        """Allow env-var shorthand: plain ID strings become objects."""
+        if isinstance(v, list):
+            return [{"id": x} if isinstance(x, str) else x for x in v]
+        return v
+
+    @model_validator(mode="after")
+    def _migrate_watched_urls(self) -> "FilterConfig":
+        """Auto-migrate legacy ``watched_urls`` to ``watched_variants``."""
+        if not self.watched_urls:
+            return self
+        for url in self.watched_urls:
+            fields = parse_uniqlo_url(url)
+            if not fields["id"]:
+                continue
+            self.watched_variants.append(WatchedVariant(
+                url=url, **fields,
+            ))
+        self.watched_urls = []
+        return self
 
 
 class TelegramChannelConfig(BaseModel):
@@ -190,8 +277,8 @@ class NotificationConfig(BaseModel):
 class QuietHoursConfig(BaseModel):
     """Suppress API calls and notifications during a daily time window."""
     enabled: bool = False
-    start: str = Field(default="01:00", pattern=r"^\d{1,2}:\d{2}$")
-    end: str = Field(default="08:00", pattern=r"^\d{1,2}:\d{2}$")
+    start: str = "01:00"
+    end: str = "08:00"
 
     @model_validator(mode="after")
     def _validate_times(self) -> "QuietHoursConfig":
@@ -200,7 +287,9 @@ class QuietHoursConfig(BaseModel):
             try:
                 _time.strptime(value, "%H:%M")
             except ValueError:
-                raise ValueError(f"quiet_hours.{label} must be HH:MM (got {value!r})")
+                raise ValueError(
+                    f"quiet_hours.{label} must be HH:MM (got {value!r})"
+                )
         return self
 
 
@@ -209,6 +298,7 @@ class AppConfig(BaseModel):
     filters: FilterConfig = Field(default_factory=FilterConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     quiet_hours: QuietHoursConfig = Field(default_factory=QuietHoursConfig)
+    server_url: str = ""
 
     @model_validator(mode="after")
     def _normalise_gender(self) -> "AppConfig":
