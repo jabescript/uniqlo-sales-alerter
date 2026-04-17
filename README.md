@@ -213,6 +213,8 @@ A product passes if it has **at least one** in-stock size matching any configure
 
 ### Watched variants
 
+![Watched variants and ignored products in the settings UI](docs/img/variants.png)
+
 Have your eye on a specific item that isn't on sale yet? Add it to `watched_variants` and the alerter will monitor it alongside the sale catalogue. Watched variants bypass all sale, discount, gender, and size filters — they only need to be purchasable.
 
 A notification is triggered when a watched variant:
