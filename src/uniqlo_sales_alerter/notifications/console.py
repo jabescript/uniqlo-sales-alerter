@@ -31,6 +31,9 @@ def _format_deal(deal: SaleItem, index: int, server_url: str = "") -> str:
             f"  {_ansi('32', '(Sale)')}"
         )
     lines = [header, price_line]
+    unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
+    if unique_colors:
+        lines.append(f"     Color: {_ansi('35', ' · '.join(unique_colors))}")
     for size, url in zip(deal.available_sizes, deal.product_urls):
         lines.append(f"     {_ansi('36', size):>8s}  {url}")
     actions = DealActions(deal, server_url)

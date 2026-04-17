@@ -18,47 +18,74 @@ logger = logging.getLogger(__name__)
 _SMTP_TIMEOUT = 30
 
 
+def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
+    """Expand a multi-size deal into one ``SaleItem`` per size+colour variant."""
+    if not deal.product_urls or len(deal.available_sizes) <= 1:
+        return [deal]
+    color_names = deal.color_names or []
+    variants: list[SaleItem] = []
+    for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls)):
+        cn = color_names[i] if i < len(color_names) else ""
+        variants.append(deal.model_copy(update={
+            "available_sizes": [sz],
+            "product_urls": [url],
+            "color_names": [cn],
+        }))
+    return variants
+
+
 def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
-    rows: list[str] = []
+    variants: list[SaleItem] = []
     for deal in deals:
-        watched_badge = ' <span style="color:gold;">⭐ Watched</span>' if deal.is_watched else ""
+        variants.extend(_expand_to_variants(deal))
+
+    rows: list[str] = []
+    for variant in variants:
+        watched_badge = ' <span style="color:gold;">⭐ Watched</span>' if variant.is_watched else ""
         img_tag = (
-            f'<img src="{deal.image_url}" alt="{deal.name}" '
+            f'<img src="{variant.image_url}" alt="{variant.name}" '
             f'style="max-width:120px;max-height:160px;border-radius:4px;" />'
-            if deal.image_url
+            if variant.image_url
             else ""
+        )
+        color_name = variant.color_names[0] if variant.color_names else ""
+        color_html = (
+            f'<small>Color: <strong>{color_name}</strong></small><br/>'
+            if color_name else ""
         )
         size_links = " &middot; ".join(
             f'<a href="{url}">{sz}</a>'
-            for sz, url in zip(deal.available_sizes, deal.product_urls)
-        ) or ", ".join(deal.available_sizes)
-        if deal.has_known_discount:
+            for sz, url in zip(variant.available_sizes, variant.product_urls)
+        ) or ", ".join(variant.available_sizes)
+        if variant.has_known_discount:
             price_html = (
                 f'<span style="text-decoration:line-through;color:#999;">'
-                f'{deal.currency_symbol}{deal.original_price:.2f}</span> &rarr; '
+                f'{variant.currency_symbol}{variant.original_price:.2f}</span> &rarr; '
                 f'<span style="color:#c0392b;font-weight:bold;">'
-                f'{deal.currency_symbol}{deal.sale_price:.2f}</span> '
-                f'<span style="color:#27ae60;">(-{deal.discount_percentage:.0f}%)</span>'
+                f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
+                f'<span style="color:#27ae60;">(-{variant.discount_percentage:.0f}%)</span>'
             )
         else:
             price_html = (
                 f'<span style="color:#c0392b;font-weight:bold;">'
-                f'{deal.currency_symbol}{deal.sale_price:.2f}</span> '
+                f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
                 f'<span style="color:#27ae60;font-weight:bold;">Sale</span>'
             )
-        actions = DealActions(deal, server_url)
+        actions = DealActions(variant, server_url)
         action_html = ""
         if actions.ignore_url:
-            watch_links = " &middot; ".join(
-                f'<a href="{wurl}" style="color:#c0392b;">'
-                f'Watch {sz}</a>'
-                for sz, wurl in actions.watch_urls
-            )
+            watch_link = ""
+            if actions.watch_urls:
+                _, wurl = actions.watch_urls[0]
+                watch_link = (
+                    f' &middot; <a href="{wurl}" style="color:#c0392b;">'
+                    f'Watch</a>'
+                )
             action_html = (
                 '<br/><small>'
                 f'<a href="{actions.ignore_url}" style="color:#999;">'
                 f'Ignore</a>'
-                + (' &middot; ' + watch_links if watch_links else '')
+                + watch_link
                 + '</small>'
             )
         rows.append(
@@ -66,9 +93,10 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
             <tr style="border-bottom:1px solid #eee;">
                 <td style="padding:12px;">{img_tag}</td>
                 <td style="padding:12px;">
-                    <strong>{deal.name}</strong>{watched_badge}<br/>
+                    <strong>{variant.name}</strong>{watched_badge}<br/>
+                    {color_html}
                     {price_html}<br/>
-                    <small>Sizes: {size_links}</small>
+                    <small>Size: {size_links}</small>
                     {action_html}
                 </td>
             </tr>"""

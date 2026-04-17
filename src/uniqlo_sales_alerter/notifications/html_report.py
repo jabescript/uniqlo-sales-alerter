@@ -65,6 +65,12 @@ def _build_report(
                 '</div>'
             )
 
+        unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
+        color_row = (
+            f'<div class="color-label">{" &middot; ".join(unique_colors)}</div>'
+            if unique_colors else ""
+        )
+
         cards.append(f"""
         <div class="card">
             <div class="card-img">{img}</div>
@@ -72,6 +78,7 @@ def _build_report(
                 <div class="card-title">
                     <span class="index">{i}.</span> {deal.name} {watched}
                 </div>
+                {color_row}
                 <div class="price-row">
                     {price_row}
                 </div>
@@ -188,6 +195,12 @@ def _build_report(
     letter-spacing: .04em; text-transform: uppercase;
     padding: 2px 7px; border-radius: 2px;
     vertical-align: middle; margin-left: 6px;
+  }}
+
+  /* ── Colour label ──────────────────────────────── */
+  .color-label {{
+    font-size: .78rem; color: var(--muted);
+    font-weight: 600;
   }}
 
   /* ── Prices ─────────────────────────────────────── */

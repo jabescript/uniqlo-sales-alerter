@@ -30,6 +30,7 @@ def sample_deal(**overrides) -> SaleItem:
             f"{_SAMPLE_BASE_URL}&sizeDisplayCode=002",
             f"{_SAMPLE_BASE_URL}&sizeDisplayCode=003",
         ],
+        color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"],
         is_watched=False,
     )
     defaults.update(overrides)

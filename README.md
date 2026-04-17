@@ -262,7 +262,7 @@ server_url: "http://192.168.1.50:8000"
 |---------|-------------|
 | **HTML report** | Star icon (☆) next to each size chip to watch that variant; Ignore button below the card. |
 | **Telegram** | Inline keyboard buttons — one "Watch {size}" button per available size, plus "Ignore". |
-| **Email** | Per-size "Watch {size}" links and an "Ignore" link in each deal row. |
+| **Email** | Each colour+size variant is a separate listing with a single "Watch" link and an "Ignore" link. |
 | **Console** | Clickable URLs printed below each deal. |
 
 Set this to the address other devices on your network can reach the server at. For remote access, use a domain name or tunnel service. The server must be reachable from the device opening the notification link. Leave empty to hide action buttons.
@@ -302,7 +302,7 @@ uniqlo:
 
 #### Email (Gmail)
 
-Deals are sent as a single HTML email with product images, prices, discount badges, and direct links per size.
+Deals are sent as a single HTML email with product images, prices, discount badges, and colour names. Each colour+size variant gets its own listing with a direct link so you can see exactly what's available at a glance.
 
 1. Go to [myaccount.google.com](https://myaccount.google.com) > **Security** > enable **2-Step Verification**.
 2. Go to [App Passwords](https://myaccount.google.com/apppasswords), create one for "Mail", and copy the 16-character password.
@@ -337,7 +337,7 @@ notifications:
 
 #### Telegram
 
-Each deal is sent as a photo message with the product image, price drop, discount percentage, available sizes, and a link to the product page.
+Each deal is sent as a photo message with the product image, colour, price drop, discount percentage, available sizes, and a link to the product page.
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and copy the **bot token**.
 2. Send any message to your new bot, then open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` to find your **chat ID**.
@@ -554,7 +554,7 @@ Previews can also run alongside the server by enabling `preview_cli` or `preview
 
 ![HTML preview report](docs/img/html_preview.png)
 
-The report includes product images, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported.
+The report includes product images, colour names, strikethrough prices with discount badges, and clickable size chips linking to in-stock variants. Dark mode is supported.
 
 <details>
 <summary><strong>CLI preview example</strong></summary>
@@ -566,16 +566,19 @@ The report includes product images, strikethrough prices with discount badges, a
 
   1. AIRism Baumwolle T-Shirt (oversized, Rundhals)
      €19.90 -> €3.90  (-80%)
+     Color: BLAU
         XS  https://www.uniqlo.com/de/de/products/E465185-000/00?colorDisplayCode=64&sizeDisplayCode=002
          S  https://www.uniqlo.com/de/de/products/E465185-000/00?colorDisplayCode=64&sizeDisplayCode=003
 
   2. Ultra Light Down Jacke [WATCHED]
      €79.90 -> €29.90  (-63%)
+     Color: SCHWARZ
          M  https://www.uniqlo.com/de/de/products/E482873-000/00?colorDisplayCode=09&sizeDisplayCode=004
          L  https://www.uniqlo.com/de/de/products/E482873-000/00?colorDisplayCode=09&sizeDisplayCode=005
 
   3. Souffle Yarn Pullover
      €39.90 -> €19.90  (-50%)
+     Color: WEISS
          M  https://www.uniqlo.com/de/de/products/E476543-000/00?colorDisplayCode=01&sizeDisplayCode=004
 ```
 

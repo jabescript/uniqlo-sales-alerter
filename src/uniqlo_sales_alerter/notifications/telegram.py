@@ -33,6 +33,12 @@ def _build_caption(deal: SaleItem) -> str:
     else:
         price_line = f"{sym}{sale} ✦ Sale"
 
+    unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
+    color_line = (
+        f"Color: {_escape_md(' · '.join(unique_colors))}"
+        if unique_colors else ""
+    )
+
     size_links = " \\| ".join(
         f"[{_escape_md(sz)}]({url})"
         for sz, url in zip(deal.available_sizes, deal.product_urls)
@@ -44,6 +50,8 @@ def _build_caption(deal: SaleItem) -> str:
         size_links or _escape_md(", ".join(deal.available_sizes)),
         f"\n[Uniqlo Sales Alerter]({PROJECT_URL})",
     ]
+    if color_line:
+        lines.insert(1, color_line)
     if deal.is_watched:
         lines.insert(0, "⭐ *Watched item*")
     return "\n".join(lines)

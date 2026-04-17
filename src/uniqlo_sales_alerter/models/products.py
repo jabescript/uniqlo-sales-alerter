@@ -121,6 +121,7 @@ class SaleItem(BaseModel):
     available_sizes: list[str]
     image_url: str | None = None
     product_urls: list[str] = Field(default_factory=list)
+    color_names: list[str] = Field(default_factory=list)
     price_group: str = ""
     rating_average: float | None = None
     rating_count: int | None = None

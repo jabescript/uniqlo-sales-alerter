@@ -31,16 +31,16 @@ async def client(config: AppConfig):
     await c.aclose()
 
 
+def _mock_v3_empty(config: AppConfig):
+    """Register an empty-response mock for the v3 endpoint."""
+    empty = make_api_response([], total=0)
+    return respx.get(config.base_url_v3).mock(
+        return_value=httpx.Response(200, json=empty),
+    )
+
+
 class TestFetchSaleProducts:
     """Tests for the merged v5 + v3 sale product fetching."""
-
-    @staticmethod
-    def _mock_v3_empty(config: AppConfig):
-        """Register an empty-response mock for the v3 endpoint."""
-        empty = make_api_response([], total=0)
-        return respx.get(config.base_url_v3).mock(
-            return_value=httpx.Response(200, json=empty),
-        )
 
     @pytest.mark.asyncio
     @respx.mock
@@ -55,7 +55,7 @@ class TestFetchSaleProducts:
             httpx.Response(200, json=response),
             httpx.Response(200, json=empty),
         ]
-        self._mock_v3_empty(config)
+        _mock_v3_empty(config)
 
         result = await client.fetch_sale_products()
         assert len(result) == 3
@@ -74,7 +74,7 @@ class TestFetchSaleProducts:
             httpx.Response(200, json=discount_resp),
             httpx.Response(200, json=limited_resp),
         ]
-        self._mock_v3_empty(config)
+        _mock_v3_empty(config)
 
         result = await client.fetch_sale_products()
         pids = {p.product_id for p in result}
@@ -92,7 +92,7 @@ class TestFetchSaleProducts:
             httpx.Response(200, json=discount_resp),
             httpx.Response(200, json=limited_resp),
         ]
-        self._mock_v3_empty(config)
+        _mock_v3_empty(config)
 
         result = await client.fetch_sale_products()
         assert len(result) == 1
@@ -106,7 +106,7 @@ class TestFetchSaleProducts:
         v5_route = respx.get(config.base_url).mock(
             return_value=httpx.Response(200, json=response)
         )
-        v3_route = self._mock_v3_empty(config)
+        v3_route = _mock_v3_empty(config)
 
         await client.fetch_sale_products()
 
@@ -166,13 +166,6 @@ class TestFetchSaleProducts:
 class TestSalePathsFetching:
     """Tests for sale_paths-based product fetching (e.g. Singapore)."""
 
-    @staticmethod
-    def _mock_v3_empty(config: AppConfig):
-        empty = make_api_response([], total=0)
-        return respx.get(config.base_url_v3).mock(
-            return_value=httpx.Response(200, json=empty),
-        )
-
     @pytest.mark.asyncio
     @respx.mock
     async def test_sale_paths_adds_products(self):
@@ -193,7 +186,7 @@ class TestSalePathsFetching:
             httpx.Response(200, json=empty),        # flagCodes=limitedOffer
             httpx.Response(200, json=path_resp),   # path=5856
         ]
-        self._mock_v3_empty(cfg)
+        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         pids = {p.product_id for p in result}
@@ -218,7 +211,7 @@ class TestSalePathsFetching:
             httpx.Response(200, json=empty),  # flagCodes=limitedOffer
             httpx.Response(200, json=resp),   # path=5856
         ]
-        self._mock_v3_empty(cfg)
+        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         assert len(result) == 1
@@ -234,7 +227,7 @@ class TestSalePathsFetching:
         v5_route = respx.get(config.base_url).mock(
             return_value=httpx.Response(200, json=empty),
         )
-        self._mock_v3_empty(config)
+        _mock_v3_empty(config)
 
         await client.fetch_sale_products()
 
@@ -260,7 +253,7 @@ class TestSalePathsFetching:
             httpx.Response(200, json=make_api_response([p1])),  # path=5856
             httpx.Response(200, json=make_api_response([p2])),  # path=5857
         ]
-        self._mock_v3_empty(cfg)
+        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         pids = {p.product_id for p in result}

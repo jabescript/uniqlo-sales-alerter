@@ -276,6 +276,7 @@ class SaleChecker:
 
         final_sizes = [s.name for s in matched_sizes]
         final_urls = list(urls)
+        final_color_names = [""] * len(matched_sizes)
 
         if watched_variants:
             base = self._config.product_page_base
@@ -293,9 +294,11 @@ class SaleChecker:
                 if size_name in final_sizes:
                     idx = final_sizes.index(size_name)
                     final_urls[idx] = wv_url
+                    final_color_names[idx] = wv.color_name
                 else:
                     final_sizes.append(size_name)
                     final_urls.append(wv_url)
+                    final_color_names.append(wv.color_name)
 
         return SaleItem(
             product_id=product.product_id,
@@ -310,6 +313,7 @@ class SaleChecker:
             available_sizes=final_sizes,
             image_url=product.main_image_url,
             product_urls=final_urls,
+            color_names=final_color_names,
             price_group=product.price_group,
             rating_average=rating.get("average"),
             rating_count=rating.get("count"),
@@ -447,6 +451,7 @@ class SaleChecker:
         # For each wanted size, find the best in-stock colour variant.
         verified_sizes: list[str] = []
         verified_urls: list[str] = []
+        verified_color_names: list[str] = []
 
         for size_name in item.available_sizes:
             best = self._pick_in_stock_variant(
@@ -457,8 +462,9 @@ class SaleChecker:
                 preferred_color=preferred_colors.get(size_name.upper()),
             )
             if best is not None:
-                color_dc, size_dc = best
+                color_dc, size_dc, color_name = best
                 verified_sizes.append(size_name)
+                verified_color_names.append(color_name)
                 url = (
                     f"{base}/{item.product_id}/{item.price_group}"
                     f"?colorDisplayCode={color_dc}&sizeDisplayCode={size_dc}"
@@ -471,6 +477,7 @@ class SaleChecker:
         return item.model_copy(update={
             "available_sizes": verified_sizes,
             "product_urls": verified_urls,
+            "color_names": verified_color_names,
         })
 
     @staticmethod
@@ -480,15 +487,15 @@ class SaleChecker:
         stock_map: dict[str, dict],
         wanted_sizes: set[str],
         preferred_color: str | None = None,
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str, str, str] | None:
         """Find an in-stock colour for *size_name*.
 
-        Returns ``(colorDisplayCode, sizeDisplayCode)`` or *None*.
+        Returns ``(colorDisplayCode, sizeDisplayCode, colorName)`` or *None*.
         When *preferred_color* is given (from a watched URL) and that colour is
         in stock, it wins regardless of quantity.  Otherwise the highest-quantity
         variant is chosen.
         """
-        candidates: list[tuple[int, str, str]] = []
+        candidates: list[tuple[int, str, str, str]] = []
         for l2 in l2s:
             sz = l2.get("size", {})
             if sz.get("name", "").upper() != size_name.upper():
@@ -497,17 +504,19 @@ class SaleChecker:
             stock = stock_map.get(l2id, {})
             if stock.get("statusCode") in _IN_STOCK_STATUSES:
                 qty = stock.get("quantity", 0)
-                color_dc = l2.get("color", {}).get("displayCode", "")
+                color_obj = l2.get("color", {})
+                color_dc = color_obj.get("displayCode", "")
+                color_name = color_obj.get("name", "")
                 size_dc = sz.get("displayCode", "")
-                candidates.append((qty, color_dc, size_dc))
+                candidates.append((qty, color_dc, size_dc, color_name))
 
         if not candidates:
             return None
 
         if preferred_color:
-            for _qty, color_dc, size_dc in candidates:
+            for _qty, color_dc, size_dc, color_name in candidates:
                 if color_dc == preferred_color:
-                    return color_dc, size_dc
+                    return color_dc, size_dc, color_name
 
         candidates.sort(reverse=True)  # highest quantity first
-        return candidates[0][1], candidates[0][2]
+        return candidates[0][1], candidates[0][2], candidates[0][3]

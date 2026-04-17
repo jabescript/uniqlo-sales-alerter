@@ -9,9 +9,9 @@ import pytest
 
 from uniqlo_sales_alerter.config import AppConfig, EmailChannelConfig, TelegramChannelConfig
 from uniqlo_sales_alerter.notifications.base import Notifier
-from uniqlo_sales_alerter.notifications.console import ConsoleNotifier
+from uniqlo_sales_alerter.notifications.console import ConsoleNotifier, _format_deal
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
-from uniqlo_sales_alerter.notifications.email import EmailNotifier, _build_html
+from uniqlo_sales_alerter.notifications.email import EmailNotifier, _build_html, _expand_to_variants
 from uniqlo_sales_alerter.notifications.html_report import HtmlReportNotifier, _build_report
 from uniqlo_sales_alerter.notifications.telegram import TelegramNotifier, _build_caption
 
@@ -46,6 +46,16 @@ class TestTelegramCaption:
         deal = _sample_deal(is_watched=False)
         caption = _build_caption(deal)
         assert "Watched" not in caption
+
+    def test_caption_shows_color(self):
+        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
+        caption = _build_caption(deal)
+        assert "Color: SCHWARZ" in caption
+
+    def test_caption_hides_color_when_empty(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        caption = _build_caption(deal)
+        assert "Color:" not in caption
 
 
 class TestTelegramNotifier:
@@ -85,43 +95,62 @@ class TestEmailHtml:
         html = _build_html([deal])
         assert "Watched" in html
 
+    def test_html_shows_color_name(self):
+        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
+        html = _build_html([deal])
+        assert "SCHWARZ" in html
+        assert "Color:" in html
+
+    def test_html_hides_color_when_empty(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        html = _build_html([deal])
+        assert "Color:" not in html
+
+    def test_html_expands_to_per_variant_rows(self):
+        deal = _sample_deal()
+        html = _build_html([deal])
+        assert html.count("<tr") == 3  # one row per size variant
+
+    def test_expand_to_variants_splits_sizes(self):
+        deal = _sample_deal()
+        variants = _expand_to_variants(deal)
+        assert len(variants) == 3
+        assert variants[0].available_sizes == ["S"]
+        assert variants[1].available_sizes == ["M"]
+        assert variants[2].available_sizes == ["L"]
+
+    def test_expand_to_variants_preserves_single_size(self):
+        deal = _sample_deal(
+            available_sizes=["M"],
+            product_urls=["https://example.com/p?colorDisplayCode=00&sizeDisplayCode=002"],
+            color_names=["SCHWARZ"],
+        )
+        variants = _expand_to_variants(deal)
+        assert len(variants) == 1
+        assert variants[0] is deal
+
+
+def _make_email_cfg(**overrides) -> EmailChannelConfig:
+    defaults = dict(
+        enabled=True, smtp_host="smtp.test.com", smtp_port=587,
+        use_tls=True, from_address="me@test.com", to_addresses=["a@b.com"],
+    )
+    defaults.update(overrides)
+    return EmailChannelConfig(**defaults)
+
 
 class TestEmailNotifier:
     def test_is_enabled(self):
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        assert EmailNotifier(cfg).is_enabled() is True
+        assert EmailNotifier(_make_email_cfg()).is_enabled() is True
 
     def test_disabled_when_no_recipients(self):
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            from_address="me@test.com",
-            to_addresses=[],
-        )
-        assert EmailNotifier(cfg).is_enabled() is False
+        assert EmailNotifier(_make_email_cfg(to_addresses=[])).is_enabled() is False
 
     def test_disabled_when_no_from_address(self):
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            from_address="",
-            to_addresses=["a@b.com"],
-        )
-        assert EmailNotifier(cfg).is_enabled() is False
+        assert EmailNotifier(_make_email_cfg(from_address="")).is_enabled() is False
 
     def test_disabled_when_flag_off(self):
-        cfg = EmailChannelConfig(
-            enabled=False,
-            smtp_host="smtp.test.com",
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        assert EmailNotifier(cfg).is_enabled() is False
+        assert EmailNotifier(_make_email_cfg(enabled=False)).is_enabled() is False
 
     @pytest.mark.asyncio
     async def test_send_calls_aiosmtplib(self, monkeypatch):
@@ -135,18 +164,8 @@ class TestEmailNotifier:
 
         monkeypatch.setattr(aiosmtplib, "send", fake_send)
 
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            smtp_port=587,
-            use_tls=True,
-            smtp_user="user",
-            smtp_password="pass",
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
-        await notifier.send([_sample_deal()])
+        cfg = _make_email_cfg(smtp_user="user", smtp_password="pass")
+        await EmailNotifier(cfg).send([_sample_deal()])
 
         assert sent_kwargs["hostname"] == "smtp.test.com"
         assert sent_kwargs["port"] == 587
@@ -168,84 +187,29 @@ class TestEmailNotifier:
 
         monkeypatch.setattr(aiosmtplib, "send", fake_send)
 
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            smtp_port=465,
-            use_tls=True,
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
-        await notifier.send([_sample_deal()])
+        await EmailNotifier(_make_email_cfg(smtp_port=465)).send([_sample_deal()])
 
         assert sent_kwargs["use_tls"] is True
         assert sent_kwargs["start_tls"] is False
 
     @pytest.mark.asyncio
-    async def test_send_auth_error_raises(self, monkeypatch):
+    @pytest.mark.parametrize("exc_factory", [
+        lambda m: m.SMTPAuthenticationError(535, "fail"),
+        lambda m: m.SMTPConnectError("refused"),
+        lambda m: m.SMTPTimeoutError("timed out"),
+    ])
+    async def test_send_smtp_errors_raise(self, monkeypatch, exc_factory):
         import aiosmtplib
 
-        async def fail_auth(msg, **kwargs):
-            raise aiosmtplib.SMTPAuthenticationError(535, "Auth failed")
+        exc = exc_factory(aiosmtplib)
 
-        monkeypatch.setattr(aiosmtplib, "send", fail_auth)
+        async def fail(msg, **kwargs):
+            raise exc
 
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            smtp_port=587,
-            use_tls=True,
-            smtp_user="bad",
-            smtp_password="creds",
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
-        with pytest.raises(aiosmtplib.SMTPAuthenticationError):
-            await notifier.send([_sample_deal()])
+        monkeypatch.setattr(aiosmtplib, "send", fail)
 
-    @pytest.mark.asyncio
-    async def test_send_connect_error_raises(self, monkeypatch):
-        import aiosmtplib
-
-        async def fail_connect(msg, **kwargs):
-            raise aiosmtplib.SMTPConnectError("Connection refused")
-
-        monkeypatch.setattr(aiosmtplib, "send", fail_connect)
-
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="bad.host",
-            smtp_port=587,
-            use_tls=True,
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
-        with pytest.raises(aiosmtplib.SMTPConnectError):
-            await notifier.send([_sample_deal()])
-
-    @pytest.mark.asyncio
-    async def test_send_timeout_error_raises(self, monkeypatch):
-        import aiosmtplib
-
-        async def fail_timeout(msg, **kwargs):
-            raise aiosmtplib.SMTPTimeoutError("timed out")
-
-        monkeypatch.setattr(aiosmtplib, "send", fail_timeout)
-
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="slow.host",
-            smtp_port=587,
-            use_tls=True,
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
-        with pytest.raises(aiosmtplib.SMTPTimeoutError):
-            await notifier.send([_sample_deal()])
+        with pytest.raises(type(exc)):
+            await EmailNotifier(_make_email_cfg()).send([_sample_deal()])
 
     @pytest.mark.asyncio
     async def test_send_logs_diagnostics_on_failure(self, monkeypatch, caplog):
@@ -256,17 +220,7 @@ class TestEmailNotifier:
 
         monkeypatch.setattr(aiosmtplib, "send", fail_auth)
 
-        cfg = EmailChannelConfig(
-            enabled=True,
-            smtp_host="smtp.test.com",
-            smtp_port=587,
-            use_tls=True,
-            smtp_user="user",
-            smtp_password="wrong",
-            from_address="me@test.com",
-            to_addresses=["a@b.com"],
-        )
-        notifier = EmailNotifier(cfg)
+        notifier = EmailNotifier(_make_email_cfg(smtp_user="user", smtp_password="wrong"))
         with pytest.raises(aiosmtplib.SMTPAuthenticationError), caplog.at_level("ERROR"):
             await notifier.send([_sample_deal()])
 
@@ -420,6 +374,17 @@ class TestConsoleNotifier:
         output = capsys.readouterr().out
         assert "No deals" in output
 
+    def test_format_deal_shows_color(self):
+        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
+        output = _format_deal(deal, 1)
+        assert "Color:" in output
+        assert "SCHWARZ" in output
+
+    def test_format_deal_hides_color_when_empty(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        output = _format_deal(deal, 1)
+        assert "Color:" not in output
+
 
 class TestHtmlReport:
     _TS = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
@@ -458,6 +423,17 @@ class TestHtmlReport:
         assert '<div class="logo">UNIQLO</div>' in html
         assert "<header>" in html
 
+    def test_report_shows_color_label(self):
+        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
+        html = _build_report([deal], self._TS)
+        assert "color-label" in html
+        assert "SCHWARZ" in html
+
+    def test_report_hides_color_when_empty(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        html = _build_report([deal], self._TS)
+        assert '<div class="color-label">' not in html
+
 
 class TestHtmlReportNotifier:
     def test_is_enabled(self):
@@ -494,8 +470,6 @@ class TestUnknownDiscountDisplay:
     """Verify all formatters show 'Sale' instead of a percentage for unknown-discount items."""
 
     def test_console_shows_sale_label(self):
-        from uniqlo_sales_alerter.notifications.console import _format_deal
-
         deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
         output = _format_deal(deal, 1)
         assert "(Sale)" in output
@@ -503,8 +477,6 @@ class TestUnknownDiscountDisplay:
         assert "->" not in output
 
     def test_console_known_discount_shows_percentage(self):
-        from uniqlo_sales_alerter.notifications.console import _format_deal
-
         deal = _sample_deal()
         output = _format_deal(deal, 1)
         assert "%" in output

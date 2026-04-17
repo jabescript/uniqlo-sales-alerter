@@ -4,6 +4,22 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
+## v1.4.0 — 2026-04-17
+
+### New features
+
+- **Colour in notifications** — all notification channels now display the colour name resolved from the Uniqlo API for each deal.
+  - **Email**: each colour+size variant is a separate listing with its colour, a direct link, and a single "Watch" action (instead of grouping all sizes into one row with multiple Watch links).
+  - **Telegram**: colour line shown between the product name and price in the caption.
+  - **HTML report**: colour label displayed below the product title in each card.
+  - **Console**: colour line printed after the price.
+
+### Code quality
+
+- Consolidated test boilerplate: parametrized SMTP error tests, extracted `EmailChannelConfig` factory, reused `sample_deal` in variant-key and stock-verification tests, hoisted shared imports, deduplicated mock helpers.
+
+---
+
 ## v1.3.0 — 2026-04-17
 
 ### New features

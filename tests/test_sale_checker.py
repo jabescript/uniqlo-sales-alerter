@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from uniqlo_sales_alerter.config import AppConfig
-from uniqlo_sales_alerter.models.products import SaleItem, UniqloProduct
+from uniqlo_sales_alerter.models.products import UniqloProduct
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 
-from .conftest import make_raw_product, noop_verify, noop_watched_fetch
+from .conftest import make_raw_product, noop_verify, noop_watched_fetch, sample_deal
 
 _MEN = "MEN"
 
@@ -304,7 +304,7 @@ class TestStockVerification:
             "A2": {"statusCode": "IN_STOCK", "quantity": 50},
         }
         result = SaleChecker._pick_in_stock_variant("M", l2s, stock, {"M"})
-        assert result == ("64", "004")  # BLUE has more stock
+        assert result == ("64", "004", "BLUE")  # BLUE has more stock
 
     def test_returns_none_when_all_out_of_stock(self):
         l2s = [_make_l2("M", "004", "RED", "15", "A1")]
@@ -337,7 +337,7 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("15", "004")  # RED preferred despite lower qty
+        assert result == ("15", "004", "RED")  # RED preferred despite lower qty
 
     def test_preferred_color_falls_back_when_oos(self):
         """If the preferred color is out of stock, fall back to highest quantity."""
@@ -352,20 +352,14 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("64", "004")  # BLUE, since RED is out
+        assert result == ("64", "004", "BLUE")  # BLUE, since RED is out
 
     @pytest.mark.asyncio
     async def test_verify_stock_drops_oos_sizes(self, sale_config: AppConfig):
         checker = SaleChecker(sale_config)
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
-            available_sizes=["M", "L"],
-            product_urls=["url_m", "url_l"],
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M", "L"], product_urls=["url_m", "url_l"],
             price_group="00",
         )
         l2s = [
@@ -391,22 +385,16 @@ class TestStockVerification:
         assert len(result) == 1
         assert result[0].available_sizes == ["L"]
         assert "colorDisplayCode=15" in result[0].product_urls[0]
+        assert result[0].color_names == ["RED"]
 
     @pytest.mark.asyncio
     async def test_verify_stock_drops_product_when_all_oos(
         self, sale_config: AppConfig
     ):
         checker = SaleChecker(sale_config)
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
-            available_sizes=["M"],
-            product_urls=["url_m"],
-            price_group="00",
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=["url_m"], price_group="00",
         )
         l2s = [_make_l2("M", "004", "RED", "15", "A1")]
         stock = {"A1": {"statusCode": "STOCK_OUT", "quantity": 0}}
@@ -430,16 +418,9 @@ class TestStockVerification:
     ):
         """When stock API fails, keep original listing data."""
         checker = SaleChecker(sale_config)
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
-            available_sizes=["M"],
-            product_urls=["url_m"],
-            price_group="00",
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=["url_m"], price_group="00",
         )
         with (
             patch.object(
@@ -951,86 +932,54 @@ class TestVariantKeys:
     """Unit tests for the static _variant_keys helper."""
 
     def test_extracts_keys_from_urls(self):
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
             available_sizes=["M", "L"],
             product_urls=[
                 "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
                 "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005",
             ],
-            price_group="00",
         )
         keys = SaleChecker._variant_keys(item)
         assert keys == {"E001:09:004:60", "E001:09:005:60"}
 
     def test_different_colors_same_size(self):
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
             available_sizes=["M"],
             product_urls=[
                 "https://x.com/products/E001/00?colorDisplayCode=01&sizeDisplayCode=004",
                 "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
             ],
-            price_group="00",
         )
         keys = SaleChecker._variant_keys(item)
         assert keys == {"E001:01:004:60", "E001:09:004:60"}
 
     def test_falls_back_to_product_id_when_no_urls(self):
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=100,
-            sale_price=40,
-            discount_percentage=60,
-            gender="MEN",
-            available_sizes=["M"],
-            product_urls=[],
-            price_group="00",
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=[],
         )
         keys = SaleChecker._variant_keys(item)
         assert keys == {"E001:60"}
 
     def test_unknown_discount_uses_sale_suffix(self):
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=50,
-            sale_price=50,
-            discount_percentage=0,
-            gender="MEN",
+        item = sample_deal(
+            product_id="E001", original_price=50, sale_price=50,
+            discount_percentage=0, has_known_discount=False,
             available_sizes=["M"],
             product_urls=[
                 "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
             ],
-            price_group="00",
-            has_known_discount=False,
         )
         keys = SaleChecker._variant_keys(item)
         assert keys == {"E001:09:004:sale"}
 
     def test_unknown_discount_fallback_uses_sale_suffix(self):
-        item = SaleItem(
-            product_id="E001",
-            name="Test",
-            original_price=50,
-            sale_price=50,
-            discount_percentage=0,
-            gender="MEN",
-            available_sizes=["M"],
-            product_urls=[],
-            price_group="00",
-            has_known_discount=False,
+        item = sample_deal(
+            product_id="E001", original_price=50, sale_price=50,
+            discount_percentage=0, has_known_discount=False,
+            available_sizes=["M"], product_urls=[],
         )
         keys = SaleChecker._variant_keys(item)
         assert keys == {"E001:sale"}
