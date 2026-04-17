@@ -206,6 +206,38 @@ _TEMPLATE = """\
   }
   .empty-msg { color: var(--muted); font-size: .82rem; font-style: italic; }
 
+  /* ── Inline rows (quiet hours, add inputs) ──── */
+  .inline-row {
+    display: flex; gap: 16px;
+  }
+  .inline-row > * { flex: 1; min-width: 0; }
+  .add-row {
+    display: flex; gap: 8px; margin-top: 10px;
+  }
+  .add-row input { flex: 1; min-width: 0; }
+  .add-row .btn { flex-shrink: 0; padding: 8px 18px; font-size: .78rem; }
+
+  /* ── Mobile ────────────────────────────────────── */
+  @media (max-width: 540px) {
+    main { padding: 0 12px 90px; margin-top: 16px; }
+    .section-body { padding: 14px; }
+    .section-header { padding: 12px 14px; font-size: .85rem; }
+    .subsection { padding: 12px; }
+    .inline-row { flex-direction: column; gap: 10px; }
+    .add-row { flex-direction: column; }
+    .add-row .btn { width: 100%; padding: 10px; }
+    .checkbox-group { gap: 10px; }
+    .toggle-row { gap: 10px; }
+    .list-item { font-size: .8rem; gap: 6px; }
+    .list-item .item-name { word-break: break-word; }
+    .list-item .item-detail { font-size: .72rem; word-break: break-all; }
+    .actions .gh { position: static; margin-left: 16px; }
+    .actions { justify-content: center; gap: 12px; }
+    .btn { padding: 11px 28px; font-size: .82rem; }
+    header { padding: 16px; }
+    header .logo { font-size: 1.3rem; }
+  }
+
   /* ── Actions ─────────────────────────────────── */
   .actions {
     position: fixed; bottom: 0; left: 0; right: 0;
@@ -329,12 +361,12 @@ _TEMPLATE = """\
         </label>
       </div>
 
-      <div class="field" style="display:flex;gap:16px">
-        <div style="flex:1">
+      <div class="field inline-row">
+        <div>
           <label for="quiet-hours-start">Start (HH:MM)</label>
           <input type="text" id="quiet-hours-start" placeholder="01:00" maxlength="5"/>
         </div>
-        <div style="flex:1">
+        <div>
           <label for="quiet-hours-end">End (HH:MM)</label>
           <input type="text" id="quiet-hours-end" placeholder="08:00" maxlength="5"/>
         </div>
@@ -429,10 +461,10 @@ _TEMPLATE = """\
         Paste a Uniqlo product URL to add, or use the Watch button in notifications.
       </div>
       <div id="watched-list"></div>
-      <div class="field" style="display:flex;gap:8px;margin-top:10px">
-        <input type="text" id="watched-add" style="flex:1"
+      <div class="field add-row">
+        <input type="text" id="watched-add"
           placeholder="Paste a Uniqlo product URL&hellip;"/>
-        <button type="button" class="btn btn-save" style="padding:8px 18px;font-size:.78rem"
+        <button type="button" class="btn btn-save"
           onclick="addWatchedFromUrl()">Add</button>
       </div>
     </div>
@@ -447,10 +479,10 @@ _TEMPLATE = """\
         Watched variants take precedence over ignored products.
       </div>
       <div id="ignored-list"></div>
-      <div class="field" style="display:flex;gap:8px;margin-top:10px">
-        <input type="text" id="ignored-add" style="flex:1"
+      <div class="field add-row">
+        <input type="text" id="ignored-add"
           placeholder="Product URL or ID (e.g. E483049-000)"/>
-        <button type="button" class="btn btn-save" style="padding:8px 18px;font-size:.78rem"
+        <button type="button" class="btn btn-save"
           onclick="addIgnored()">Add</button>
       </div>
     </div>
