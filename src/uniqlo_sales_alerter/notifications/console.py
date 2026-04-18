@@ -19,17 +19,19 @@ def _ansi(code: str, text: str) -> str:
 def _format_deal(deal: SaleItem, index: int, server_url: str = "") -> str:
     watched = _ansi("33", " [WATCHED]") if deal.is_watched else ""
     header = _ansi("1", f"  {index}. {deal.name}") + watched
-    if deal.has_known_discount:
+    if deal.has_known_discount and deal.discount_percentage > 0:
         price_line = (
             f"     {_ansi('9', f'{deal.currency_symbol}{deal.original_price:.2f}')}"
             f" -> {_ansi('32;1', f'{deal.currency_symbol}{deal.sale_price:.2f}')}"
             f"  {_ansi('32', f'(-{deal.discount_percentage:.0f}%)')}"
         )
-    else:
+    elif not deal.has_known_discount:
         price_line = (
             f"     {_ansi('32;1', f'{deal.currency_symbol}{deal.sale_price:.2f}')}"
             f"  {_ansi('32', '(Sale)')}"
         )
+    else:
+        price_line = f"     {deal.currency_symbol}{deal.sale_price:.2f}"
     lines = [header, price_line]
     unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
     if unique_colors:
@@ -72,4 +74,6 @@ class ConsoleNotifier:
 
         print()
         print(_ansi("2", f"  {PROJECT_URL}"))
+        if self._server_url:
+            print(_ansi("2", f"  Settings: {self._server_url}/settings"))
         print()

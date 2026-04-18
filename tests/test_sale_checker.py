@@ -920,12 +920,13 @@ class TestUnknownDiscountFiltering:
         pids = {r.product_id for r in result}
         assert pids == {"E001", "E003"}
 
-    def test_unknown_discount_no_promo(self, checker: SaleChecker):
-        """Items with promo=None are also treated as unknown discount."""
+    def test_no_promo_has_known_discount_true(self, checker: SaleChecker):
+        """Items with promo=None have known pricing (just no discount)."""
         products = [_product(_raw("E001", base=50, promo=None))]
         result = checker._apply_filters(products)
         assert len(result) == 1
-        assert result[0].has_known_discount is False
+        assert result[0].has_known_discount is True
+        assert result[0].discount_percentage == 0
 
 
 class TestVariantKeys:

@@ -318,7 +318,7 @@ class SaleChecker:
             rating_average=rating.get("average"),
             rating_count=rating.get("count"),
             is_watched=is_watched,
-            has_known_discount=product.is_on_sale,
+            has_known_discount=product.is_on_sale or product.prices.promo is None,
         )
 
     def _normalised_size_set(self) -> set[str]:

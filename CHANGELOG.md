@@ -15,6 +15,12 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
   - **Console**: colour line printed after the price.
 - **Configurable port** — new `port` setting (default `8000`) controls which port the server listens on. `server_url` is now host-only (e.g. `http://192.168.1.50`); the port is appended automatically. Configurable via `config.yaml`, the web UI, or the `PORT` environment variable.
 - **Unwatch button** — watched items now show an "Unwatch" action button (instead of "Watch") in all notification channels. Clicking it removes the product from the watch list. New endpoint: `GET /actions/unwatch/{id}`.
+- **Settings link in notifications** — when `server_url` is configured, all notification channels include a link to the settings page in their footer.
+- **Clickable product images** — product images in email and HTML report notifications now link directly to the variant's product page on uniqlo.com.
+
+### Bug fixes
+
+- **Watched items no longer show a false "Sale" label** — watched items that are not on sale previously displayed a "Sale" badge because the pricing logic conflated "no promotion" with "unknown discount" (limited-country behaviour). Items with no promotion now correctly show just the price with no label.
 
 ### Code quality
 

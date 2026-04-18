@@ -23,10 +23,15 @@ def _build_report(
             '<span class="badge-watched">WATCHED</span>'
             if deal.is_watched else ""
         )
-        img = (
+        first_url = deal.product_urls[0] if deal.product_urls else ""
+        img_inner = (
             f'<img src="{deal.image_url}" alt="{deal.name}" loading="lazy"/>'
             if deal.image_url
             else '<div class="no-img">No image</div>'
+        )
+        img = (
+            f'<a href="{first_url}" target="_blank">{img_inner}</a>'
+            if deal.image_url and first_url else img_inner
         )
         actions = DealActions(deal, server_url)
         if actions.unwatch_url:
@@ -48,17 +53,21 @@ def _build_report(
                 size_parts.append(chip)
         size_links = " ".join(size_parts) or ", ".join(deal.available_sizes)
 
-        if deal.has_known_discount:
+        if deal.has_known_discount and deal.discount_percentage > 0:
             price_row = (
                 f'<span class="price-old">{deal.currency_symbol}{deal.original_price:.2f}</span>'
                 f'<span class="arrow">&rarr;</span>'
                 f'<span class="price-sale">{deal.currency_symbol}{deal.sale_price:.2f}</span>'
                 f'<span class="discount">-{deal.discount_percentage:.0f}%</span>'
             )
-        else:
+        elif not deal.has_known_discount:
             price_row = (
                 f'<span class="price-sale">{deal.currency_symbol}{deal.sale_price:.2f}</span>'
                 f'<span class="discount">Sale</span>'
+            )
+        else:
+            price_row = (
+                f'<span class="price-sale">{deal.currency_symbol}{deal.sale_price:.2f}</span>'
             )
 
         action_row = ""
@@ -296,7 +305,10 @@ def _build_report(
 {"".join(cards)}
 </div>
 <footer>Powered by <a href="{PROJECT_URL}"
-  style="text-decoration:none;color:inherit;"><span>UNIQLO</span> Sales Alerter</a></footer>
+  style="text-decoration:none;color:inherit;"><span>UNIQLO</span> Sales Alerter</a>{
+  f' &middot; <a href="{server_url}/settings" style="text-decoration:none;color:inherit;">Settings</a>'
+  if server_url else ""
+}</footer>
 </body>
 </html>"""
 

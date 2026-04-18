@@ -42,11 +42,16 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
     rows: list[str] = []
     for variant in variants:
         watched_badge = ' <span style="color:gold;">⭐ Watched</span>' if variant.is_watched else ""
-        img_tag = (
+        variant_url = variant.product_urls[0] if variant.product_urls else ""
+        img_html = (
             f'<img src="{variant.image_url}" alt="{variant.name}" '
             f'style="max-width:120px;max-height:160px;border-radius:4px;" />'
             if variant.image_url
             else ""
+        )
+        img_tag = (
+            f'<a href="{variant_url}">{img_html}</a>'
+            if img_html and variant_url else img_html
         )
         color_name = variant.color_names[0] if variant.color_names else ""
         color_html = (
@@ -57,7 +62,7 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
             f'<a href="{url}">{sz}</a>'
             for sz, url in zip(variant.available_sizes, variant.product_urls)
         ) or ", ".join(variant.available_sizes)
-        if variant.has_known_discount:
+        if variant.has_known_discount and variant.discount_percentage > 0:
             price_html = (
                 f'<span style="text-decoration:line-through;color:#999;">'
                 f'{variant.currency_symbol}{variant.original_price:.2f}</span> &rarr; '
@@ -65,11 +70,16 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
                 f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
                 f'<span style="color:#27ae60;">(-{variant.discount_percentage:.0f}%)</span>'
             )
-        else:
+        elif not variant.has_known_discount:
             price_html = (
                 f'<span style="color:#c0392b;font-weight:bold;">'
                 f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
                 f'<span style="color:#27ae60;font-weight:bold;">Sale</span>'
+            )
+        else:
+            price_html = (
+                f'<span style="font-weight:bold;">'
+                f'{variant.currency_symbol}{variant.sale_price:.2f}</span>'
             )
         actions = DealActions(variant, server_url)
         action_html = ""
@@ -108,6 +118,11 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
             </tr>"""
         )
 
+    settings_link = (
+        f' · <a href="{server_url}/settings" style="color:#999;">Settings</a>'
+        if server_url else ""
+    )
+
     return f"""
     <html><body>
     <h2>Uniqlo Sale Alert — {len(deals)} deal(s) found</h2>
@@ -116,7 +131,7 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
     </table>
     <p style="color:#999;font-size:12px;">
         Sent by <a href="{PROJECT_URL}"
-        style="color:#999;">Uniqlo Sales Alerter</a>
+        style="color:#999;">Uniqlo Sales Alerter</a>{settings_link}
     </p>
     </body></html>
     """

@@ -21,17 +21,19 @@ def _escape_md(text: str) -> str:
     return text
 
 
-def _build_caption(deal: SaleItem) -> str:
+def _build_caption(deal: SaleItem, server_url: str = "") -> str:
     name = _escape_md(deal.name)
     sym = _escape_md(deal.currency_symbol)
     sale = _escape_md(f"{deal.sale_price:.2f}")
 
-    if deal.has_known_discount:
+    if deal.has_known_discount and deal.discount_percentage > 0:
         original = _escape_md(f"{deal.original_price:.2f}")
         pct = _escape_md(f"{deal.discount_percentage:.0f}%")
         price_line = f"~{sym}{original}~ ➜ {sym}{sale} \\(\\-{pct}\\)"
-    else:
+    elif not deal.has_known_discount:
         price_line = f"{sym}{sale} ✦ Sale"
+    else:
+        price_line = f"{sym}{sale}"
 
     unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
     color_line = (
@@ -44,11 +46,15 @@ def _build_caption(deal: SaleItem) -> str:
         for sz, url in zip(deal.available_sizes, deal.product_urls)
     )
 
+    footer = f"[Uniqlo Sales Alerter]({PROJECT_URL})"
+    if server_url:
+        footer += f" · [Settings]({server_url}/settings)"
+
     lines = [
         f"*{name}*",
         price_line,
         size_links or _escape_md(", ".join(deal.available_sizes)),
-        f"\n[Uniqlo Sales Alerter]({PROJECT_URL})",
+        f"\n{footer}",
     ]
     if color_line:
         lines.insert(1, color_line)
@@ -82,7 +88,7 @@ class TelegramNotifier:
         chat_id = self._config.chat_id
 
         for deal in deals:
-            caption = _build_caption(deal)
+            caption = _build_caption(deal, server_url=self._server_url)
             actions = DealActions(deal, self._server_url)
             markup = None
             if actions.ignore_url:
