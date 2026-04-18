@@ -61,10 +61,6 @@ def _run_server() -> None:
     config = load_config()
     port = config.port
 
-    logging.getLogger(__name__).info(
-        "Settings UI: http://localhost:%d/settings", port,
-    )
-
     uvicorn.run(
         "uniqlo_sales_alerter.main:app",
         host="0.0.0.0",
