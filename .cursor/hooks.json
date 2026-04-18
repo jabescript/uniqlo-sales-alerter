@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "type": "prompt",
+        "prompt": "Before finishing, verify: if any user-visible changes were made to source files in src/ during this session (new features, bug fixes, config options, UI changes, API endpoints), was CHANGELOG.md also updated? If CHANGELOG.md was NOT updated but should have been, add the missing entry now. If only internal changes were made (test refactoring, code cleanup with no behaviour change, documentation-only), no changelog entry is needed. Here is the hook input: $ARGUMENTS",
+        "timeout": 30
+      }
+    ]
+  }
+}

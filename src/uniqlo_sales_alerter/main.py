@@ -287,10 +287,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _add_check_job(state)
     state.scheduler.start()
 
-    try:
-        await run_sale_check(state)
-    except Exception:
-        logger.exception("Initial sale check failed — will retry on schedule")
+    if config.notifications.check_on_startup:
+        try:
+            await run_sale_check(state)
+        except Exception:
+            logger.exception("Initial sale check failed — will retry on schedule")
+    else:
+        logger.info("Startup check disabled (check_on_startup=false)")
 
     yield
 

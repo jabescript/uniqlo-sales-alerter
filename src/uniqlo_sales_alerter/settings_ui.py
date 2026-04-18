@@ -565,6 +565,19 @@ _TEMPLATE = """\
         </select>
       </div>
 
+      <div class="toggle-row field">
+        <div>
+          <span class="toggle-label">Check on Startup</span>
+          <div class="toggle-help">
+            Run a sale check immediately when the server starts.
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="check-on-startup"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+
       <!-- Telegram -->
       <div class="subsection">
         <div class="subsection-header">
@@ -914,6 +927,7 @@ _TEMPLATE = """\
     $("preview-cli").checked  = !!cfg.notifications.preview_cli;
     $("preview-html").checked = !!cfg.notifications.preview_html;
     $("notify-on").value      = cfg.notifications.notify_on;
+    $("check-on-startup").checked = cfg.notifications.check_on_startup !== false;
 
     var tg = cfg.notifications.channels.telegram;
     $("telegram-enabled").checked = !!tg.enabled;
@@ -967,6 +981,7 @@ _TEMPLATE = """\
         preview_cli:  checked("preview-cli"),
         preview_html: checked("preview-html"),
         notify_on:    val("notify-on"),
+        check_on_startup: checked("check-on-startup"),
         channels: {
           telegram: {
             enabled:   checked("telegram-enabled"),

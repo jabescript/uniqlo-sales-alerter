@@ -71,6 +71,7 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("PORT",                        ["port"],                                    "int"),
     # -- notifications --
     ("NOTIFY_ON",                   ["notifications", "notify_on"],              "str"),
+    ("CHECK_ON_STARTUP",            ["notifications", "check_on_startup"],       "bool"),
     ("PREVIEW_CLI",                 ["notifications", "preview_cli"],            "bool"),
     ("PREVIEW_HTML",                ["notifications", "preview_html"],           "bool"),
     # -- telegram --
@@ -297,9 +298,12 @@ class ChannelsConfig(BaseModel):
 
 
 class NotificationConfig(BaseModel):
+    """Notification behaviour and channel configuration."""
+
     preview_cli: bool = False
     preview_html: bool = False
     notify_on: Literal["all_then_new", "new_deals", "every_check"] = "all_then_new"
+    check_on_startup: bool = True
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
 

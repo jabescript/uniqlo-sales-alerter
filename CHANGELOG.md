@@ -18,7 +18,9 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 - **Settings link in notifications** — when `server_url` is configured, all notification channels include a link to the settings page in their footer.
 - **Clickable product images** — product images in email and HTML report notifications now link directly to the variant's product page on uniqlo.com.
 - **Colour-matched product images** — notification images now match the variant's colour instead of always showing the product's default colour. Applies to email (per-variant), Telegram (first variant's colour), and HTML report (first variant's colour).
-- **Scheduled checks** — new `scheduled_checks` setting for fixed daily check times (e.g. `["12:00", "18:00"]`). Runs independently of `check_interval_minutes` and is **not** affected by quiet hours. Both modes can be used together. Configurable via `config.yaml`, the web UI, or the `SCHEDULED_CHECKS` environment variable. The web UI now shows periodic and scheduled checks side by side.
+- **Scheduled checks** — new `scheduled_checks` setting for fixed daily check times (e.g. `["12:00", "18:00"]`). Runs independently of `check_interval_minutes` and is **not** affected by quiet hours. Both modes can be used together. Configurable via `config.yaml`, the web UI, or the `SCHEDULED_CHECKS` environment variable. The web UI now shows periodic and scheduled checks side by side. When both modes are active, a recent scheduled check automatically skips the next periodic one.
+- **Disable periodic checks** — setting `check_interval_minutes` to `0` disables periodic checks entirely, allowing scheduled-check-only operation.
+- **Check on startup toggle** — new `check_on_startup` setting (default `true`) controls whether a sale check runs immediately when the server starts. Set to `false` to skip the initial check and wait for the first scheduled or periodic check. Configurable via `config.yaml`, the web UI, or `CHECK_ON_STARTUP` env var.
 
 ### Bug fixes
 

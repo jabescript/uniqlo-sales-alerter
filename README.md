@@ -439,6 +439,7 @@ Every config option can be set via environment variables for initial bootstrappi
 | `SERVER_URL` | string | `server_url` |
 | `PORT` | int | `port` |
 | `NOTIFY_ON` | string | `notifications.notify_on` |
+| `CHECK_ON_STARTUP` | true/false | `notifications.check_on_startup` |
 | `PREVIEW_CLI` | true/false | `notifications.preview_cli` |
 | `PREVIEW_HTML` | true/false | `notifications.preview_html` |
 | `TELEGRAM_ENABLED` | true/false | `notifications.channels.telegram.enabled` |

@@ -137,6 +137,11 @@ notifications:
   #   "every_check"  — send ALL matching deals every time (useful for digests).
   notify_on: all_then_new
 
+  # Whether to run a sale check immediately on server startup.
+  # Set to false to skip the initial check and wait for the first
+  # scheduled or periodic check instead.
+  check_on_startup: true
+
   channels:
     telegram:
       enabled: false
