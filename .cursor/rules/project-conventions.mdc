@@ -7,8 +7,8 @@ alwaysApply: true
 
 ## After every change
 
-- Run `python -m pytest tests/ --tb=short` and fix any failures before finishing.
-- Run `python -m ruff check src/ tests/` and fix any lint errors.
+- Run `python -m pytest tests/ --tb=short` and fix any failures before finishing — **only when code in `src/` or `tests/` was modified**. Skip for documentation-only changes (`README.md`, `CHANGELOG.md`, `.cursor/rules/`, etc.).
+- Run `python -m ruff check src/ tests/` and fix any lint errors — **same rule: only when code was modified**.
 - Update `CHANGELOG.md` under the current version section for user-visible changes.
 - Update `README.md` when user-facing behaviour changes: new config options, new CLI flags, new API endpoints, changed notification format, new Docker examples, or anything a user would need to know.
 

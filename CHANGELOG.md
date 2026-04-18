@@ -6,6 +6,11 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ## v1.4.0 — 2026-04-17
 
+### Docs
+
+- **README**: restructured for compactness — merged Web UI into Quick Start, collapsed secondary install paths and deployment sections into expandable blocks, merged watched/ignored and scheduling/quiet-hours into combined sections, promoted Notifications to a top-level section, and trimmed redundant prose throughout (~720 lines down to ~430).
+- **config.yaml**: reordered to match the README and web UI structure — general filters (gender, sizes, min discount) now come before watched/ignored items, added section divider comments, trimmed verbose comments, removed legacy `watched_urls` key.
+
 ### New features
 
 - **Colour in notifications** — all notification channels now display the colour name resolved from the Uniqlo API for each deal.

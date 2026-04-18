@@ -1,45 +1,69 @@
+# ── General ────────────────────────────────────────────────────
 uniqlo:
-  # Country/language path segment used to build the Uniqlo API URL.
+  # Country/language for the Uniqlo API.
   # Full support:    "de/de", "uk/en", "fr/fr", "es/es", "it/it",
   #                  "be/fr", "be/nl", "nl/nl", "dk/en", "se/en",
   #                  "au/en", "in/en", "id/en", "vn/vi", "ph/en",
   #                  "my/en", "th/en"
   # Limited support: "us/en", "ca/en", "jp/ja", "kr/ko", "sg/en"
-  #   Limited countries show sale-flagged items but don't expose the
-  #   original price, so discount percentages are unavailable and
-  #   min_sale_percentage is ignored.
+  #   Limited countries show sale-flagged items but can't calculate
+  #   discount percentages; min_sale_percentage is ignored.
   country: "de/de"
 
   # How often to poll the Uniqlo API (in minutes).
-  # Periodic checks respect quiet hours — they are skipped during the
-  # configured quiet window.  Set to 0 to disable periodic checks
-  # (useful when using only scheduled_checks below).
+  # Respects quiet hours.  Set to 0 to disable periodic checks.
   check_interval_minutes: 30
 
-  # Fixed times to run a sale check (24-hour HH:MM format, local time).
-  # These run independently of check_interval_minutes and are NOT
-  # affected by quiet hours.  Both can be used together — if a
-  # scheduled check ran recently, the next periodic check is skipped.
+  # Fixed daily check times (24-hour HH:MM, local time).
+  # Not affected by quiet hours.  Both modes can be used together.
   scheduled_checks: []
-  # Optional: sale category path IDs to fetch from.
-  # Some countries (notably Singapore) organise their sale items into
-  # category paths rather than tagging them with flagCodes.  Without
-  # these IDs the alerter will only find a small fraction of sale items.
-  #
-  # To find your paths: open the sale page on uniqlo.com for your country
-  # and look at the URL — e.g. ".../feature/sale/men?path=5856" → "5856".
-  #
-  # Singapore paths (as of 2026):
-  #   sale_paths: ["5855", "5856", "5857", "5858"]
-  #   5855 = all sale, 5856 = men, 5857 = women, 5858 = kids
+
+  # Sale category path IDs (required for Singapore, optional elsewhere).
+  # Find yours in the sale-page URL: .../feature/sale/men?path=5856
+  # Singapore paths (as of 2026): ["5855", "5856", "5857", "5858"]
   sale_paths: []
 
+# ── Scheduling ─────────────────────────────────────────────────
+quiet_hours:
+  # Suppress periodic checks during this daily window.
+  # Times are 24-hour HH:MM, local time.  May cross midnight.
+  enabled: false
+  start: "01:00"
+  end: "08:00"
+
+# ── Filters ────────────────────────────────────────────────────
 filters:
-  # Specific product variants (colour + size) to always include when in
-  # stock, even if the item is not on sale.  Paste the full Uniqlo product
-  # URL — product ID, colour, size, and price group are extracted
-  # automatically.  Human-readable names (product name, colour name, size
-  # name) are resolved from the API on startup and saved back here.
+  # Which genders to include.  Valid: men, women, unisex, kids, baby
+  gender:
+  - MEN
+  - WOMEN
+  - UNISEX
+
+  # Minimum discount to surface a deal (ignored for limited countries).
+  min_sale_percentage: 50.0
+
+  # Size filters — only items with at least one matching in-stock size.
+  # Omit or leave empty to skip filtering for that category.
+  #   Clothing: XXS, XS, S, M, L, XL, XXL, 3XL
+  #   Pants:    22inch – 40inch
+  #   Shoes:    37 – 43 (half sizes supported)
+  #   One Size: bags, hats, accessories
+  sizes:
+    clothing:
+    - M
+    pants:
+    - 30inch
+    - 31inch
+    - 32inch
+    shoes:
+    - '42'
+    - '42.5'
+    one_size: true
+
+  # ── Watched & Ignored ─────────────────────────────────────────
+  # Watched variants: specific colour+size combos to always monitor,
+  # even when not on sale.  Paste a Uniqlo product URL — metadata is
+  # resolved from the API on startup.
   watched_variants:
   - url: 
       https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003
@@ -60,7 +84,8 @@ filters:
     size: '004'
     size_name: M
 
-  # Products to hide from all results, regardless of sale status or size.
+  # Ignored products: hidden from all results regardless of sale/size.
+  # Watched variants take precedence over ignored products.
   ignored_products:
   - id: E481518-000
     url: https://www.uniqlo.com/de/de/products/E481518-000/00
@@ -68,79 +93,29 @@ filters:
   - id: E485255-000
     url: https://www.uniqlo.com/de/de/products/E485255-000/00
     name: ZOOTROPOLIS UT T-Shirt
-  watched_urls: []
 
-  # Which genders to include. Valid values: men, women, unisex, kids, baby
-  gender:
-  - MEN
-  - WOMEN
-  - UNISEX
-
-  # Minimum discount percentage to surface a deal. Default: 50
-  # Only applies to countries where the API provides both original and sale
-  # prices.  For limited-support countries (US, CA, JP, KR, SG) this filter
-  # is ignored because no discount info is available.
-  min_sale_percentage: 50.0
-
-  # Size filters — only show items available in at least one of these sizes.
-  # Each item's stock is verified in real-time; out-of-stock sizes are excluded
-  # and the notification URL points to a colour that is actually purchasable.
-  # Omit or leave a category empty to skip filtering for it.
-  #
-  # Clothing: XXS, XS, S, M, L, XL, XXL, 3XL
-  # Pants:    22inch – 40inch  (women start at 22inch, men at 28inch)
-  # Shoes:    37, 37.5, 38, 38.5, 39, 40, 41, 41.5, 42, 42.5, 43
-  # One Size: bags, hats, accessories, etc.
-  sizes:
-    clothing:
-    - M
-    pants:
-    - 30inch
-    - 31inch
-    - 32inch
-    shoes:
-    - '42'
-    - '42.5'
-    one_size: true
-
-# Host URL of this server, used to build action links (Ignore / Watch)
-# in notifications.  Set to the address other devices can reach, e.g.
-# "http://192.168.1.50", "http://localhost" or "https://alerts.example.com".
-# The configured port is appended automatically.
-# Leave empty to hide action buttons from notifications.
+# ── Server URL ─────────────────────────────────────────────────
+# Enables Ignore / Watch / Unwatch action buttons in notifications.
+# Set to the address other devices can reach, e.g. "http://192.168.1.50".
+# The port is appended automatically.  Leave empty to hide buttons.
 server_url: "http://localhost"
-
-# Port the server listens on.
 port: 8000
 
-quiet_hours:
-  # Suppress all API calls and notifications during this daily window.
-  # Useful for avoiding overnight checks.  Uses local system time.
-  # Times are in 24-hour HH:MM format; the window may cross midnight
-  # (e.g. start: "23:00", end: "06:00").
-  enabled: false
-  start: "01:00"
-  end: "08:00"
-
+# ── Notifications ──────────────────────────────────────────────
 notifications:
-  # Preview modes — generate local previews of matched deals.
-  # These work alongside real channels, so you can preview AND send.
-  # Also available via CLI: --preview-cli / --preview-html
-  preview_cli: false   # print deals to the terminal (text)
-  preview_html: false  # generate an HTML report and open it in the browser (with images)
   # Notification mode:
-  #   "all_then_new" — send ALL matching deals on the first check after startup,
-  #                     then only new variants on subsequent checks. (default)
-  #   "new_deals"    — only deals with at least one unseen product:color:size
-  #                     variant. State persisted to .seen_variants.json so
-  #                     restarts don't re-trigger already-seen deals.
-  #   "every_check"  — send ALL matching deals every time (useful for digests).
+  #   "all_then_new" — all deals on first check, then only changes (default)
+  #   "new_deals"    — only unseen variants (state persists across restarts)
+  #   "every_check"  — all matching deals every time
   notify_on: all_then_new
 
-  # Whether to run a sale check immediately on server startup.
-  # Set to false to skip the initial check and wait for the first
-  # scheduled or periodic check instead.
+  # Run a sale check immediately on server startup.
   check_on_startup: true
+
+  # Preview modes — local previews alongside real channels.
+  # Also available via CLI: --preview-cli / --preview-html
+  preview_cli: false
+  preview_html: false
 
   channels:
     telegram:
