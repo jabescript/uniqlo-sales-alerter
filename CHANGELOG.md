@@ -17,6 +17,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 - **Unwatch button** — watched items now show an "Unwatch" action button (instead of "Watch") in all notification channels. Clicking it removes the product from the watch list. New endpoint: `GET /actions/unwatch/{id}`.
 - **Settings link in notifications** — when `server_url` is configured, all notification channels include a link to the settings page in their footer.
 - **Clickable product images** — product images in email and HTML report notifications now link directly to the variant's product page on uniqlo.com.
+- **Scheduled checks** — new `scheduled_checks` setting for fixed daily check times (e.g. `["12:00", "18:00"]`). Runs independently of `check_interval_minutes` and is **not** affected by quiet hours. Both modes can be used together. Configurable via `config.yaml`, the web UI, or the `SCHEDULED_CHECKS` environment variable. The web UI now shows periodic and scheduled checks side by side.
 
 ### Bug fixes
 

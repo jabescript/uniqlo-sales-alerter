@@ -55,6 +55,7 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     # -- uniqlo --
     ("UNIQLO_COUNTRY",              ["uniqlo", "country"],                       "str"),
     ("UNIQLO_CHECK_INTERVAL",       ["uniqlo", "check_interval_minutes"],        "int"),
+    ("SCHEDULED_CHECKS",            ["uniqlo", "scheduled_checks"],              "list"),
     ("UNIQLO_SALE_PATHS",           ["uniqlo", "sale_paths"],                    "list"),
     # -- filters --
     ("FILTER_GENDER",               ["filters", "gender"],                       "list"),
@@ -144,9 +145,35 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 class UniqloConfig(BaseModel):
+    """Uniqlo API connection and scheduling settings."""
+
     country: str = "de/de"
-    check_interval_minutes: int = Field(default=30, ge=1)
+    check_interval_minutes: int = Field(default=30, ge=0)
+    scheduled_checks: list[str] = Field(default_factory=list)
     sale_paths: list[str] = Field(default_factory=list)
+
+    @field_validator("scheduled_checks", mode="before")
+    @classmethod
+    def _validate_scheduled_checks(cls, v: Any) -> list[str]:
+        """Validate and normalise scheduled check times to HH:MM format."""
+        import time as _time
+
+        if not isinstance(v, list):
+            return v
+        cleaned: list[str] = []
+        for entry in v:
+            entry = str(entry).strip()
+            if not entry:
+                continue
+            try:
+                _time.strptime(entry, "%H:%M")
+            except ValueError:
+                raise ValueError(
+                    f"Invalid scheduled check time '{entry}' — "
+                    f"expected 24-hour HH:MM format (e.g. '12:00')"
+                ) from None
+            cleaned.append(entry)
+        return cleaned
 
 
 class SizeFilters(BaseModel):
@@ -420,10 +447,13 @@ def _deep_update_yaml(target: dict, source: dict) -> None:
     """Recursively merge *source* into *target*, preserving YAML comments.
 
     ruamel.yaml attaches comments that appear *between* the last item of a
-    block sequence and the next mapping key to that last sequence item.
-    A naive ``target[key] = plain_list`` would discard those comments, so
-    we rebuild a ``CommentedSeq`` and transplant the trailing comment from
-    the old sequence's last item to the new one.
+    block sequence and the next mapping key to that last sequence item
+    (or to a nested dict's last key).  We preserve these by:
+
+    1. Copying ``CommentedSeq.ca`` from the old list to the new one.
+    2. If the old list's last element is a ``CommentedMap`` whose last key
+       carries a trailing comment, transplanting that to the new list's
+       last element (same key).
     """
     for key, value in source.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):
@@ -431,11 +461,18 @@ def _deep_update_yaml(target: dict, source: dict) -> None:
         elif isinstance(value, list):
             old = target.get(key)
             new_seq = CommentedSeq(value)
-            if isinstance(old, CommentedSeq) and old.ca.items:
-                last_old = max(old.ca.items)
-                last_new = len(new_seq) - 1
-                if last_new >= 0:
-                    new_seq.ca.items[last_new] = old.ca.items[last_old]
+            if isinstance(old, CommentedSeq):
+                # Preserve sequence-level comments
+                if old.ca.comment:
+                    new_seq.ca.comment = old.ca.comment
+                # Preserve per-item trailing comments
+                if old.ca.items:
+                    last_old_idx = max(old.ca.items)
+                    last_new_idx = len(new_seq) - 1
+                    if last_new_idx >= 0:
+                        new_seq.ca.items[last_new_idx] = (
+                            old.ca.items[last_old_idx]
+                        )
             target[key] = new_seq
         else:
             target[key] = value

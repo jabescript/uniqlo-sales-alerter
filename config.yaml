@@ -10,9 +10,17 @@ uniqlo:
   #   min_sale_percentage is ignored.
   country: "de/de"
 
-  # How often to poll the Uniqlo API (in minutes)
+  # How often to poll the Uniqlo API (in minutes).
+  # Periodic checks respect quiet hours — they are skipped during the
+  # configured quiet window.  Set to 0 to disable periodic checks
+  # (useful when using only scheduled_checks below).
   check_interval_minutes: 30
 
+  # Fixed times to run a sale check (24-hour HH:MM format, local time).
+  # These run independently of check_interval_minutes and are NOT
+  # affected by quiet hours.  Both can be used together — if a
+  # scheduled check ran recently, the next periodic check is skipped.
+  scheduled_checks: []
   # Optional: sale category path IDs to fetch from.
   # Some countries (notably Singapore) organise their sale items into
   # category paths rather than tagging them with flagCodes.  Without
@@ -60,7 +68,6 @@ filters:
   - id: E485255-000
     url: https://www.uniqlo.com/de/de/products/E485255-000/00
     name: ZOOTROPOLIS UT T-Shirt
-
   watched_urls: []
 
   # Which genders to include. Valid values: men, women, unisex, kids, baby

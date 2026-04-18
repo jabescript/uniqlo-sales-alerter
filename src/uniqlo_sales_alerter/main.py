@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import AsyncIterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -35,6 +35,7 @@ class AppState:
     sale_checker: SaleChecker
     dispatcher: NotificationDispatcher
     scheduler: AsyncIOScheduler = field(default_factory=AsyncIOScheduler)
+    last_check_at: datetime | None = None
 
 
 state: AppState  # module-level reference set during lifespan
@@ -173,6 +174,7 @@ async def run_sale_check(app_state: AppState) -> SaleCheckResult:
     """Execute a sale check and dispatch notifications."""
     try:
         result = await app_state.sale_checker.check()
+        app_state.last_check_at = datetime.now()
         logger.info(
             "Sale check complete — %d matching deals (%d new)",
             len(result.matching_deals),
@@ -194,21 +196,48 @@ async def run_sale_check(app_state: AppState) -> SaleCheckResult:
 
 
 def _add_check_job(app_state: AppState) -> None:
-    """Register a periodic sale check with the async scheduler."""
+    """Register periodic and/or fixed-time sale checks with the scheduler."""
 
-    async def _job() -> None:
+    async def _interval_job() -> None:
         if _in_quiet_hours(app_state.config):
-            logger.info("Quiet hours active (%s – %s) — skipping sale check",
+            logger.info("Quiet hours active (%s – %s) — skipping periodic check",
                         app_state.config.quiet_hours.start,
                         app_state.config.quiet_hours.end)
             return
+        interval = app_state.config.uniqlo.check_interval_minutes
+        if (
+            app_state.last_check_at
+            and datetime.now() - app_state.last_check_at
+            < timedelta(minutes=interval * 0.8)
+        ):
+            logger.info(
+                "Skipping periodic check — a scheduled check ran recently",
+            )
+            return
+        await run_sale_check(app_state)
+
+    async def _scheduled_job() -> None:
         await run_sale_check(app_state)
 
     interval = app_state.config.uniqlo.check_interval_minutes
-    app_state.scheduler.add_job(
-        _job, "interval", minutes=interval, id="sale_check",
-    )
-    logger.info("Scheduled sale checks every %d minute(s)", interval)
+    if interval > 0:
+        app_state.scheduler.add_job(
+            _interval_job, "interval", minutes=interval,
+            id="sale_check_interval",
+        )
+        logger.info("Scheduled periodic checks every %d minute(s)", interval)
+    else:
+        logger.info("Periodic checks disabled (check_interval_minutes=0)")
+
+    for check_time in app_state.config.uniqlo.scheduled_checks:
+        hour, minute = check_time.split(":")
+        app_state.scheduler.add_job(
+            _scheduled_job, "cron",
+            hour=int(hour), minute=int(minute),
+            id=f"sale_check_{check_time}",
+        )
+        logger.info("Scheduled fixed check at %s", check_time)
+
 
 
 async def _try_enrich(config: AppConfig, client: UniqloClient) -> None:

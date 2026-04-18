@@ -44,6 +44,7 @@ Create a **config.yaml** — copy the [example config](config.yaml) and set your
 uniqlo:
   country: "de/de"              # see supported countries below
   check_interval_minutes: 30
+  scheduled_checks: ["12:00", "18:00"]  # optional fixed daily times
 
 filters:
   gender: [men, women]
@@ -379,9 +380,28 @@ The system tracks every `product:color:size:discount%` combination per size, usi
 
 </details>
 
+### Scheduled checks
+
+By default, the alerter polls Uniqlo every `check_interval_minutes`. You can also set fixed daily times with `scheduled_checks`. Both can be used together.
+
+```yaml
+uniqlo:
+  check_interval_minutes: 60          # periodic — every 60 minutes
+  scheduled_checks: ["12:00", "18:00"] # fixed — always at noon and 6 PM
+```
+
+| Mode | Config key | Quiet hours | Use case |
+|------|-----------|:-----------:|----------|
+| **Periodic** | `check_interval_minutes` | Respected (skipped) | Continuous monitoring (set to `0` to disable) |
+| **Scheduled** | `scheduled_checks` | **Ignored** (always runs) | Predictable daily digests |
+
+Times are in 24-hour `HH:MM` format using local system time. Set `check_interval_minutes` to `0` to disable periodic checks and rely solely on scheduled times. Leave `scheduled_checks` empty (or omit it) to use only periodic checks.
+
+When both modes are active, redundant checks are avoided automatically: if a scheduled check ran recently (within 80% of the interval window), the next periodic check is skipped since the data is already fresh.
+
 ### Quiet hours
 
-You can suppress all API calls and notifications during a daily time window — useful for avoiding overnight checks. When a scheduled check fires during quiet hours it is silently skipped; the next check runs normally once the window ends.
+Suppress **periodic** checks during a daily time window — useful for avoiding overnight polls. Scheduled checks (`scheduled_checks`) are not affected by quiet hours and always run.
 
 ```yaml
 quiet_hours:
@@ -403,6 +423,7 @@ Every config option can be set via environment variables for initial bootstrappi
 |---|---|---|
 | `UNIQLO_COUNTRY` | string | `uniqlo.country` |
 | `UNIQLO_CHECK_INTERVAL` | int | `uniqlo.check_interval_minutes` |
+| `SCHEDULED_CHECKS` | comma-separated | `uniqlo.scheduled_checks` |
 | `UNIQLO_SALE_PATHS` | comma-separated | `uniqlo.sale_paths` |
 | `QUIET_HOURS_ENABLED` | true/false | `quiet_hours.enabled` |
 | `QUIET_HOURS_START` | string (HH:MM) | `quiet_hours.start` |

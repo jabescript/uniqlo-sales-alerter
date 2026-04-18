@@ -336,9 +336,74 @@ _TEMPLATE = """\
     </div>
   </div>
 
-  <!-- ── API Settings ──────────────────────────── -->
+  <!-- ── Schedule ─────────────────────────────── -->
   <div class="section">
-    <div class="section-header">API Settings</div>
+    <div class="section-header">Schedule</div>
+    <div class="section-body">
+
+      <div class="inline-row" style="align-items:flex-start">
+        <!-- Left column: periodic checks -->
+        <div style="flex:1;min-width:0">
+          <div class="field" style="margin-bottom:10px">
+            <label for="check-interval">Periodic Checks</label>
+            <div class="help">
+              Runs every N minutes. Skipped during quiet hours.
+              Set to <code>0</code> to disable.
+            </div>
+            <input type="number" id="check-interval" min="0" step="1"
+              placeholder="30"/>
+          </div>
+
+          <div class="toggle-row" style="padding:2px 0 6px">
+            <div>
+              <span class="toggle-label">Quiet Hours</span>
+              <div class="toggle-help">
+                Suppress periodic checks during this window.
+              </div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="quiet-hours-enabled"/>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="inline-row" style="gap:10px">
+            <div>
+              <label for="quiet-hours-start">Start</label>
+              <input type="text" id="quiet-hours-start" placeholder="01:00" maxlength="5"/>
+            </div>
+            <div>
+              <label for="quiet-hours-end">End</label>
+              <input type="text" id="quiet-hours-end" placeholder="08:00" maxlength="5"/>
+            </div>
+          </div>
+          <div class="help" style="margin-top:2px">
+            24-hour HH:MM. May cross midnight.
+          </div>
+        </div>
+
+        <!-- Right column: scheduled checks -->
+        <div style="flex:1;min-width:0">
+          <div class="field">
+            <label for="scheduled-checks">Scheduled Checks</label>
+            <div class="help">
+              Fixed daily times (24-hour HH:MM, one per line).
+              Always runs &mdash; <strong>not</strong> affected by quiet hours.
+              Both modes can be used together; a recent scheduled check
+              automatically skips the next periodic one.
+            </div>
+            <textarea id="scheduled-checks" rows="4"
+              placeholder="12:00&#10;16:00&#10;20:00"></textarea>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── General ─────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">General</div>
     <div class="section-body">
 
       <div class="field">
@@ -379,40 +444,6 @@ _TEMPLATE = """\
       </div>
 
       <div class="field">
-        <label for="check-interval">Check Interval (minutes)</label>
-        <div class="help">How often the Uniqlo API is polled for new deals.</div>
-        <input type="number" id="check-interval" min="1" step="1"/>
-      </div>
-
-      <div class="toggle-row field">
-        <div>
-          <span class="toggle-label">Quiet Hours</span>
-          <div class="toggle-help">
-            Suppress all API calls and notifications during a daily time window.
-          </div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="quiet-hours-enabled"/>
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="field inline-row">
-        <div>
-          <label for="quiet-hours-start">Start (HH:MM)</label>
-          <input type="text" id="quiet-hours-start" placeholder="01:00" maxlength="5"/>
-        </div>
-        <div>
-          <label for="quiet-hours-end">End (HH:MM)</label>
-          <input type="text" id="quiet-hours-end" placeholder="08:00" maxlength="5"/>
-        </div>
-      </div>
-      <div class="help" style="margin-top:-10px">
-        24-hour format. The window may cross midnight (e.g.&nbsp;23:00 &ndash; 06:00).
-        Uses local system time.
-      </div>
-
-      <div class="field" style="margin-top:18px">
         <label for="server-url">Server URL</label>
         <div class="help">
           Host URL of this server for action buttons (Ignore / Watch) in notifications.
@@ -661,6 +692,19 @@ _TEMPLATE = """\
   function val(id)       { return $(id).value; }
   function checked(id)   { return $(id).checked; }
 
+  var _TIME_RE = /^([01]?\\d|2[0-3]):[0-5]\\d$/;
+  function validateScheduledChecks() {
+    var lines = splitLines(val("scheduled-checks"));
+    for (var i = 0; i < lines.length; i++) {
+      if (!_TIME_RE.test(lines[i])) {
+        showToast("Invalid scheduled check time: '" + lines[i]
+          + "' — use 24-hour HH:MM format (e.g. 12:00)", "error");
+        return false;
+      }
+    }
+    return true;
+  }
+
   function showToast(msg, type) {
     var el = $("toast");
     el.textContent = msg;
@@ -841,6 +885,7 @@ _TEMPLATE = """\
   function populate(cfg) {
     $("country").value = cfg.uniqlo.country;
     $("check-interval").value = cfg.uniqlo.check_interval_minutes;
+    $("scheduled-checks").value = (cfg.uniqlo.scheduled_checks || []).join("\\n");
     $("sale-paths").value = (cfg.uniqlo.sale_paths || []).join(", ");
 
     var genders = (cfg.filters.gender || []).map(function(g){return g.toLowerCase()});
@@ -895,7 +940,8 @@ _TEMPLATE = """\
     return {
       uniqlo: {
         country: val("country"),
-        check_interval_minutes: parseInt(val("check-interval"), 10) || 15,
+        check_interval_minutes: parseInt(val("check-interval"), 10),
+        scheduled_checks: splitLines(val("scheduled-checks")),
         sale_paths: splitCSV(val("sale-paths"))
       },
       server_url: val("server-url"),
@@ -945,6 +991,7 @@ _TEMPLATE = """\
   /* ── form submit ─────────────────────────────── */
   $("config-form").addEventListener("submit", function (e) {
     e.preventDefault();
+    if (!validateScheduledChecks()) return;
     var btn = $("save-btn");
     btn.disabled = true;
     btn.textContent = "Saving\\u2026";
