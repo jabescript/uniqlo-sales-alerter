@@ -1,0 +1,27 @@
+---
+description: Testing conventions
+globs: tests/**/*.py
+alwaysApply: false
+---
+
+# Testing Conventions
+
+## Fixtures and helpers
+
+- Use `sample_deal(**overrides)` from `conftest.py` to build `SaleItem` objects. Never construct `SaleItem(...)` manually in tests.
+- Use `_make_email_cfg(**overrides)` for `EmailChannelConfig` in notification tests.
+- Use `noop_verify()` and `noop_watched_fetch()` from conftest to isolate filter/check tests from stock verification.
+- Use the module-level `_mock_v3_empty()` in `test_uniqlo_client.py` for v3 endpoint mocks.
+
+## Country configs in client tests
+
+- Tests for `fetch_sale_products` must use a country whose `CountryCapabilities.listing_sources` include the endpoints being tested:
+  - v5 discount only: `de/de`
+  - v5 discount + limitedOffer: `id/en`
+  - v3 + v5 mix: `th/en`
+  - sale_paths: `sg/en` (with `sale_paths` configured)
+
+## Parametrize over copy-paste
+
+- When 3+ tests follow the same pattern with different inputs, use `@pytest.mark.parametrize`.
+- Example: SMTP error tests are parametrized, not duplicated.

@@ -1,0 +1,34 @@
+---
+description: Core project conventions for the Uniqlo Sales Alerter
+alwaysApply: true
+---
+
+# Project Conventions
+
+## After every change
+
+- Run `python -m pytest tests/ --tb=short` and fix any failures before finishing.
+- Run `python -m ruff check src/ tests/` and fix any lint errors.
+- Update `CHANGELOG.md` under the current version section for user-visible changes.
+
+## Architecture
+
+- **Country capabilities**: Use `config.capabilities` (the `CountryCapabilities` registry in `config.py`) for any country-specific logic. Never hardcode country checks like `if country == "ph"`.
+- **Price display** has three states in all notification channels:
+  - `has_known_discount=True` and `discount_percentage > 0` -- strikethrough with percentage
+  - `has_known_discount=False` -- "Sale" label (limited countries, unknown discount)
+  - `has_known_discount=True` and `discount_percentage == 0` -- just the price, no label
+- **`has_known_discount`** is determined by whether the item came from the sale feed (`in_sale_feed`), not by the `promo` field.
+- **Stock verification**: When the v5 stock API reports 100% `STOCK_OUT`, use L2 data for URLs but skip stock filtering. This handles PH/TH where v5 stock is unreliable.
+
+## Config and settings
+
+- `server_url` is host-only (no port). The `port` field is separate. Use `config.full_server_url` to get the combined URL.
+- The web UI auto-saves watched variants and ignored products immediately; other settings require "Save & Reload".
+
+## Notifications
+
+- All four channels (email, Telegram, console, HTML report) must stay consistent: same information, same price display logic, same action buttons.
+- Email expands deals into per-variant rows (one listing per colour+size). Other channels show all sizes in one listing.
+- Watched items show "Unwatch" instead of "Watch" in action buttons.
+- When `server_url` is configured, include a Settings link in the footer.
