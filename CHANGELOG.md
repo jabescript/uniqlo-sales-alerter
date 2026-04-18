@@ -6,6 +6,10 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ## v1.5.0 — 2026-04-18
 
+### Improvements
+
+- **Quieter INFO logs** — demoted 16 verbose or redundant log lines to DEBUG across config, dispatcher, email, sale checker, and Uniqlo client. A typical sale-check cycle now produces ~3 INFO lines (fetch summary, result, delivery) instead of ~10. Internal details like notifier registration, state file loading, quiet-hour skips, and per-endpoint pagination totals are still available at DEBUG level.
+
 ### Code quality
 
 - **Architecture refactor** — DRY: shared price/colour/image helpers in `notifications/base.py`, unified pagination (`_paginate`), single `build_product_url`. Replaced global `state` with FastAPI `Depends()` injection. Split `_build_report` into `_render_card` + `_REPORT_CSS`. Added `html.escape()`, narrowed broad `except` blocks, aligned v3/v5 logging.

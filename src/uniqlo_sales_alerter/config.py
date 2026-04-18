@@ -499,7 +499,7 @@ def _write_yaml(data: dict[str, Any], path: Path) -> None:
 
     with path.open("w", encoding="utf-8") as fh:
         rt.dump(to_write, fh)
-    logger.info("Configuration written to %s", path)
+    logger.debug("Configuration written to %s", path)
 
 
 def save_config(config: AppConfig, path: Path | str | None = None) -> None:

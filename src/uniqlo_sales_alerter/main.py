@@ -151,7 +151,7 @@ async def _enrich_config(config: AppConfig, client: UniqloClient) -> bool:
             changed = changed or bool(wv.color_name)
 
     if changed:
-        logger.info(
+        logger.debug(
             "Enriched metadata for %d watched variant(s) "
             "and %d ignored product(s)",
             len(incomplete_variants), len(incomplete_ignored),
@@ -189,9 +189,9 @@ def _add_check_job(app_state: AppState) -> None:
 
     async def _interval_job() -> None:
         if _in_quiet_hours(app_state.config):
-            logger.info("Quiet hours active (%s – %s) — skipping periodic check",
-                        app_state.config.quiet_hours.start,
-                        app_state.config.quiet_hours.end)
+            logger.debug("Quiet hours active (%s – %s) — skipping periodic check",
+                         app_state.config.quiet_hours.start,
+                         app_state.config.quiet_hours.end)
             return
         interval = app_state.config.uniqlo.check_interval_minutes
         if (
@@ -199,7 +199,7 @@ def _add_check_job(app_state: AppState) -> None:
             and datetime.now() - app_state.last_check_at
             < timedelta(minutes=interval * 0.8)
         ):
-            logger.info(
+            logger.debug(
                 "Skipping periodic check — a scheduled check ran recently",
             )
             return

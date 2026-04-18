@@ -190,7 +190,7 @@ class EmailNotifier:
             else "plaintext"
         )
 
-        logger.info(
+        logger.debug(
             "Sending %d deal(s) via %s:%d (%s) to %s",
             len(deals), cfg.smtp_host, cfg.smtp_port, tls_mode,
             ", ".join(cfg.to_addresses),
@@ -213,7 +213,7 @@ class EmailNotifier:
                 password=cfg.smtp_password or None,
                 timeout=_SMTP_TIMEOUT,
             )
-            logger.info("Email sent to %s", cfg.to_addresses)
+            logger.debug("Email sent to %s", cfg.to_addresses)
         except aiosmtplib.SMTPAuthenticationError as exc:
             logger.error(
                 "SMTP authentication failed for %s@%s:%d — %s",

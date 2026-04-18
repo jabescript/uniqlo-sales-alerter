@@ -51,22 +51,22 @@ class NotificationDispatcher:
 
         tg = TelegramNotifier(channels.telegram, server_url=server_url)
         notifiers.append(tg)
-        logger.info("Registered TelegramNotifier (enabled=%s)", tg.is_enabled())
+        logger.debug("Registered TelegramNotifier (enabled=%s)", tg.is_enabled())
 
         em = EmailNotifier(channels.email, server_url=server_url)
         notifiers.append(em)
-        logger.info("Registered EmailNotifier (enabled=%s)", em.is_enabled())
+        logger.debug("Registered EmailNotifier (enabled=%s)", em.is_enabled())
         if not em.is_enabled():
             _log_email_disabled(channels.email)
 
         if ncfg.preview_cli:
             notifiers.append(ConsoleNotifier(enabled=True, server_url=server_url))
-            logger.info("Registered ConsoleNotifier (preview_cli)")
+            logger.debug("Registered ConsoleNotifier (preview_cli)")
         if ncfg.preview_html:
             notifiers.append(
                 HtmlReportNotifier(enabled=True, server_url=server_url),
             )
-            logger.info("Registered HtmlReportNotifier (preview_html)")
+            logger.debug("Registered HtmlReportNotifier (preview_html)")
 
         return notifiers
 
@@ -80,7 +80,7 @@ class NotificationDispatcher:
             logger.debug("No deals to dispatch — skipping")
             return
 
-        logger.info(
+        logger.debug(
             "Dispatching %d deal(s) to %d registered channel(s)",
             len(deals), len(self._notifiers),
         )

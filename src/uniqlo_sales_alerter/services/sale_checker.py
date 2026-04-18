@@ -76,7 +76,7 @@ class SaleChecker:
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
             variants = data.get("variants", [])
-            logger.info(
+            logger.debug(
                 "Loaded %d seen variants from %s", len(variants), self._state_path,
             )
             return set(variants)
@@ -137,7 +137,7 @@ class SaleChecker:
     async def check(self) -> SaleCheckResult:
         """Run a full sale check: fetch sale items, filter, diff, and cache."""
         sale_products = await self._client.fetch_sale_products()
-        logger.info("Fetched %d sale products from Uniqlo API", len(sale_products))
+        logger.debug("Fetched %d sale products from Uniqlo API", len(sale_products))
 
         # Items come from flagCodes=discount / limitedOffer, plus any
         # configured sale_paths (category IDs).  Some countries return
@@ -159,7 +159,7 @@ class SaleChecker:
                 watched_extra = await self._client.fetch_products_by_ids(
                     sorted(to_fetch),
                 )
-                logger.info(
+                logger.debug(
                     "Fetched %d watched product(s) not currently on sale",
                     len(watched_extra),
                 )

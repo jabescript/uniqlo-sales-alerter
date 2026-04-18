@@ -371,7 +371,7 @@ class UniqloClient:
                 break
 
         if all_products:
-            logger.info(
+            logger.debug(
                 "Fetched %d products in total%s",
                 len(all_products),
                 f" ({label})" if label else "",
