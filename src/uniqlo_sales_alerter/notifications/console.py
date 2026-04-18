@@ -39,8 +39,11 @@ def _format_deal(deal: SaleItem, index: int, server_url: str = "") -> str:
     actions = DealActions(deal, server_url)
     if actions.ignore_url:
         lines.append(f"     {_ansi('2', f'[Ignore] {actions.ignore_url}')}")
-        for sz, wurl in actions.watch_urls:
-            lines.append(f"     {_ansi('2', f'[Watch {sz}] {wurl}')}")
+        if actions.unwatch_url:
+            lines.append(f"     {_ansi('2', f'[Unwatch] {actions.unwatch_url}')}")
+        else:
+            for sz, wurl in actions.watch_urls:
+                lines.append(f"     {_ansi('2', f'[Watch {sz}] {wurl}')}")
     return "\n".join(lines)
 
 

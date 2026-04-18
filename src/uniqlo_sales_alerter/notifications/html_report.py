@@ -29,17 +29,23 @@ def _build_report(
             else '<div class="no-img">No image</div>'
         )
         actions = DealActions(deal, server_url)
-        watch_map = dict(actions.watch_urls)
-        size_parts: list[str] = []
-        for sz, url in zip(deal.available_sizes, deal.product_urls):
-            chip = f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
-            wurl = watch_map.get(sz)
-            if wurl:
-                chip += (
-                    f'<a class="watch-chip" href="{wurl}" '
-                    f'target="_blank" title="Watch {sz}">&#9734;</a>'
-                )
-            size_parts.append(chip)
+        if actions.unwatch_url:
+            size_parts = [
+                f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
+                for sz, url in zip(deal.available_sizes, deal.product_urls)
+            ]
+        else:
+            watch_map = dict(actions.watch_urls)
+            size_parts = []
+            for sz, url in zip(deal.available_sizes, deal.product_urls):
+                chip = f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
+                wurl = watch_map.get(sz)
+                if wurl:
+                    chip += (
+                        f'<a class="watch-chip" href="{wurl}" '
+                        f'target="_blank" title="Watch {sz}">&#9734;</a>'
+                    )
+                size_parts.append(chip)
         size_links = " ".join(size_parts) or ", ".join(deal.available_sizes)
 
         if deal.has_known_discount:
@@ -57,12 +63,18 @@ def _build_report(
 
         action_row = ""
         if actions.ignore_url:
+            unwatch_btn = (
+                f'<a class="action-btn action-unwatch" '
+                f'href="{actions.unwatch_url}" '
+                f'target="_blank">Unwatch</a>'
+            ) if actions.unwatch_url else ""
             action_row = (
                 '<div class="actions-row">'
                 f'<a class="action-btn action-ignore" '
                 f'href="{actions.ignore_url}" '
                 f'target="_blank">Ignore</a>'
-                '</div>'
+                + unwatch_btn
+                + '</div>'
             )
 
         unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
@@ -256,6 +268,9 @@ def _build_report(
   .action-btn:hover {{ opacity: .8; }}
   .action-ignore {{
     background: var(--border); color: var(--text);
+  }}
+  .action-unwatch {{
+    background: var(--uq-red); color: #fff;
   }}
 
   /* ── Footer ─────────────────────────────────────── */

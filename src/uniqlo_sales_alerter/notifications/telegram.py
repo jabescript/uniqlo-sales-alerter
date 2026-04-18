@@ -86,12 +86,17 @@ class TelegramNotifier:
             actions = DealActions(deal, self._server_url)
             markup = None
             if actions.ignore_url:
-                rows = [
-                    [InlineKeyboardButton(
-                        f"Watch {sz}", url=wurl,
-                    )]
-                    for sz, wurl in actions.watch_urls
-                ]
+                if actions.unwatch_url:
+                    rows = [[InlineKeyboardButton(
+                        "Unwatch", url=actions.unwatch_url,
+                    )]]
+                else:
+                    rows = [
+                        [InlineKeyboardButton(
+                            f"Watch {sz}", url=wurl,
+                        )]
+                        for sz, wurl in actions.watch_urls
+                    ]
                 rows.append([InlineKeyboardButton(
                     "Ignore", url=actions.ignore_url,
                 )])

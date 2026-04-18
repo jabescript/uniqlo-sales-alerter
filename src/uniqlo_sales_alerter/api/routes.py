@@ -245,6 +245,42 @@ async def action_ignore(
     )
 
 
+@actions_router.get("/unwatch/{product_id}")
+async def action_unwatch(
+    product_id: str,
+    name: str = Query(""),
+) -> HTMLResponse:
+    """Remove a product from the watch list (browser-friendly)."""
+    from uniqlo_sales_alerter.main import state
+
+    current = state.config
+    pid_upper = product_id.upper()
+    before = len(current.filters.watched_variants)
+    kept = [
+        wv for wv in current.filters.watched_variants
+        if wv.id.upper() != pid_upper
+    ]
+
+    if len(kept) == before:
+        return _action_page(
+            "Not watched",
+            f"<b>{html.escape(name or product_id)}</b> is not on your "
+            "watch list.",
+        )
+
+    data = current.model_dump()
+    data["filters"]["watched_variants"] = [
+        wv.model_dump() for wv in kept
+    ]
+    await _save_and_reload(data)
+
+    display = html.escape(name or product_id)
+    return _action_page(
+        "Variant unwatched",
+        f"<b>{display}</b> has been removed from your watch list.",
+    )
+
+
 @actions_router.get("/watch/{product_id}")
 async def action_watch(
     product_id: str,

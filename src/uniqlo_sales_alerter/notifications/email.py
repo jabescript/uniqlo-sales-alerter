@@ -74,18 +74,24 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
         actions = DealActions(variant, server_url)
         action_html = ""
         if actions.ignore_url:
-            watch_link = ""
-            if actions.watch_urls:
+            if actions.unwatch_url:
+                extra_link = (
+                    f' &middot; <a href="{actions.unwatch_url}" '
+                    f'style="color:#c0392b;">Unwatch</a>'
+                )
+            elif actions.watch_urls:
                 _, wurl = actions.watch_urls[0]
-                watch_link = (
+                extra_link = (
                     f' &middot; <a href="{wurl}" style="color:#c0392b;">'
                     f'Watch</a>'
                 )
+            else:
+                extra_link = ""
             action_html = (
                 '<br/><small>'
                 f'<a href="{actions.ignore_url}" style="color:#999;">'
                 f'Ignore</a>'
-                + watch_link
+                + extra_link
                 + '</small>'
             )
         rows.append(

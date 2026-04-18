@@ -14,6 +14,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
   - **HTML report**: colour label displayed below the product title in each card.
   - **Console**: colour line printed after the price.
 - **Configurable port** — new `port` setting (default `8000`) controls which port the server listens on. `server_url` is now host-only (e.g. `http://192.168.1.50`); the port is appended automatically. Configurable via `config.yaml`, the web UI, or the `PORT` environment variable.
+- **Unwatch button** — watched items now show an "Unwatch" action button (instead of "Watch") in all notification channels. Clicking it removes the product from the watch list. New endpoint: `GET /actions/unwatch/{id}`.
 
 ### Code quality
 

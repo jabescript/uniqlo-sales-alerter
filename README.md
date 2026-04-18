@@ -602,6 +602,7 @@ The server exposes a JSON API alongside the web UI. Interactive docs (Swagger UI
 | `PUT` | `/api/v1/config` | Update configuration (save & reload) |
 | `GET` | `/actions/ignore/{id}` | Add a product to the ignore list (browser action, returns HTML) |
 | `GET` | `/actions/watch/{id}` | Add a variant to the watch list (browser action, returns HTML) |
+| `GET` | `/actions/unwatch/{id}` | Remove a product from the watch list (browser action, returns HTML) |
 
 ## Development
 
