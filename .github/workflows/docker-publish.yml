@@ -46,7 +46,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run E2E tests against live Uniqlo API
-        run: python -m pytest -m e2e -v --timeout=300
+        run: python -m pytest -m e2e -v
 
   build-and-push:
     needs: [test, e2e]
