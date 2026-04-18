@@ -253,7 +253,7 @@ Product names are resolved automatically from the API on startup, just like watc
 
 ### Server URL and action buttons
 
-When `server_url` is configured, each notification includes **Ignore** and **Watch** action buttons. The Ignore button applies to the entire product; the Watch button appears per size so you can choose exactly which variant to track. The configured `port` is appended automatically.
+When `server_url` is configured, each notification includes **Ignore**, **Watch**, and **Unwatch** action buttons plus a link to the **Settings** page. The Ignore button applies to the entire product; Watch appears per size for unwatched items; Unwatch replaces it for items already on your watch list. The configured `port` is appended automatically.
 
 ```yaml
 server_url: "http://192.168.1.50"
@@ -262,12 +262,12 @@ port: 8000
 
 | Channel | How it works |
 |---------|-------------|
-| **HTML report** | Star icon (☆) next to each size chip to watch that variant; Ignore button below the card. |
-| **Telegram** | Inline keyboard buttons — one "Watch {size}" button per available size, plus "Ignore". |
-| **Email** | Each colour+size variant is a separate listing with a single "Watch" link and an "Ignore" link. |
-| **Console** | Clickable URLs printed below each deal. |
+| **HTML report** | Star icon (☆) next to each size chip to watch that variant; Unwatch / Ignore buttons below the card. Settings link in footer. |
+| **Telegram** | Inline keyboard buttons — "Watch {size}" or "Unwatch" plus "Ignore". Settings link in caption. |
+| **Email** | Each colour+size variant is a separate listing with "Watch" or "Unwatch" and "Ignore" links. Settings link in footer. |
+| **Console** | Clickable action URLs printed below each deal. Settings URL at the bottom. |
 
-Set this to the address other devices on your network can reach the server at. For remote access, use a domain name or tunnel service. The server must be reachable from the device opening the notification link. Leave empty to hide action buttons.
+Set this to the address other devices on your network can reach the server at. For remote access, use a domain name or tunnel service. The server must be reachable from the device opening the notification link. Leave empty to hide action buttons and settings link.
 
 ### Sale category paths
 
@@ -438,12 +438,30 @@ Every config option can be set via environment variables for initial bootstrappi
 
 ### Updating
 
-**Docker:**
+**Docker Compose:**
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+**Docker run** (preserves your mounted `config.yaml` and state volume):
+
+```bash
+docker stop uniqlo-alerter
+docker rm uniqlo-alerter
+docker pull kequach/uniqlo-sales-alerter
+docker run -d \
+  --name uniqlo-alerter \
+  -p 8000:8000 \
+  -v ./config.yaml:/app/config.yaml \
+  -v alerter-state:/app/data \
+  -e STATE_FILE=/app/data/.seen_variants.json \
+  --restart unless-stopped \
+  kequach/uniqlo-sales-alerter
+```
+
+Your `config.yaml` is mounted from the host and the state volume persists across containers, so no data is lost.
 
 **Git install:**
 
