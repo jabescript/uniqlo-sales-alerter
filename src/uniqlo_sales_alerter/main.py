@@ -287,6 +287,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("Startup check disabled (check_on_startup=false)")
 
+    logger.info("Settings UI: http://localhost:%d/settings", config.port)
+
     yield
 
     app_state = app.state.app_state

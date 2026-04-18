@@ -9,6 +9,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 ### Improvements
 
 - **Quieter INFO logs** — demoted 16 verbose or redundant log lines to DEBUG across config, dispatcher, email, sale checker, and Uniqlo client. A typical sale-check cycle now produces ~3 INFO lines (fetch summary, result, delivery) instead of ~10. Internal details like notifier registration, state file loading, quiet-hour skips, and per-endpoint pagination totals are still available at DEBUG level. APScheduler's per-job "executed successfully" messages are also suppressed.
+- **Settings UI log timing** — the "Settings UI: ..." message now appears at the end of lifespan startup (right before uvicorn starts serving) instead of before `uvicorn.run()` begins.
 
 ### Code quality
 
