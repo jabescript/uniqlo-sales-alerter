@@ -20,7 +20,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedSeq
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 logger = logging.getLogger(__name__)
 
@@ -447,17 +447,72 @@ class AppConfig(BaseModel):
         return f"{self.server_url.rstrip('/')}:{self.port}"
 
 
+def _transplant_seq_comments(
+    old_seq: CommentedSeq,
+    new_seq: CommentedSeq,
+) -> None:
+    """Transfer trailing/between-key comments from *old_seq* to *new_seq*.
+
+    ruamel.yaml can store such comments in two places depending on whether
+    the sequence contains scalars or mappings:
+
+    **Scalar sequences** — comments after the last item are stored in
+    ``seq.ca.items[last_index]`` (a per-item comment tuple on the seq).
+
+    **Mapping sequences** — comments after the last item are stored as a
+    post-comment (slot 2) on the last ``CommentedMap`` item's last key.
+    """
+    if not old_seq or not new_seq:
+        return
+
+    last_old_idx = len(old_seq) - 1
+    last_new_idx = len(new_seq) - 1
+
+    if old_seq.ca.comment:
+        new_seq.ca.comment = old_seq.ca.comment
+
+    # Per-item comments on the seq itself (scalar sequences)
+    if old_seq.ca.items:
+        for idx, entry in old_seq.ca.items.items():
+            target_idx = last_new_idx if idx == last_old_idx else idx
+            if 0 <= target_idx < len(new_seq):
+                new_seq.ca.items[target_idx] = entry
+
+    # Post-comment on last CommentedMap item's last key (mapping sequences)
+    last_old_item = old_seq[-1]
+    if not isinstance(last_old_item, CommentedMap) or not last_old_item.ca.items:
+        return
+
+    for key in reversed(list(last_old_item.keys())):
+        entry = last_old_item.ca.items.get(key)
+        if not entry or len(entry) <= 2 or entry[2] is None:
+            continue
+
+        last_new_item = new_seq[-1]
+        if isinstance(last_new_item, dict) and not isinstance(last_new_item, CommentedMap):
+            new_seq[-1] = CommentedMap(last_new_item)
+            last_new_item = new_seq[-1]
+
+        if isinstance(last_new_item, CommentedMap) and last_new_item:
+            tgt = key if key in last_new_item else list(last_new_item.keys())[-1]
+            ca_entry = list(
+                last_new_item.ca.items.get(tgt, [None, None, None, None]),
+            )
+            while len(ca_entry) < 3:
+                ca_entry.append(None)
+            ca_entry[2] = entry[2]
+            last_new_item.ca.items[tgt] = ca_entry
+        break
+
+
 def _deep_update_yaml(target: dict, source: dict) -> None:
     """Recursively merge *source* into *target*, preserving YAML comments.
 
-    ruamel.yaml attaches comments that appear *between* the last item of a
-    block sequence and the next mapping key to that last sequence item
-    (or to a nested dict's last key).  We preserve these by:
-
-    1. Copying ``CommentedSeq.ca`` from the old list to the new one.
-    2. If the old list's last element is a ``CommentedMap`` whose last key
-       carries a trailing comment, transplanting that to the new list's
-       last element (same key).
+    ruamel.yaml attaches comments that appear between the end of a block
+    sequence and the next mapping key to internal comment structures on
+    the sequence or its last item.  When we replace a sequence value with
+    a new ``CommentedSeq`` of plain dicts those comments would be lost, so
+    we transplant them to the replacement sequence.
     """
     for key, value in source.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):
@@ -466,17 +521,7 @@ def _deep_update_yaml(target: dict, source: dict) -> None:
             old = target.get(key)
             new_seq = CommentedSeq(value)
             if isinstance(old, CommentedSeq):
-                # Preserve sequence-level comments
-                if old.ca.comment:
-                    new_seq.ca.comment = old.ca.comment
-                # Preserve per-item trailing comments
-                if old.ca.items:
-                    last_old_idx = max(old.ca.items)
-                    last_new_idx = len(new_seq) - 1
-                    if last_new_idx >= 0:
-                        new_seq.ca.items[last_new_idx] = (
-                            old.ca.items[last_old_idx]
-                        )
+                _transplant_seq_comments(old, new_seq)
             target[key] = new_seq
         else:
             target[key] = value

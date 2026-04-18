@@ -17,6 +17,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Bug fixes
 
+- **YAML comments preserved on save** — `save_config` was stripping comments that appear between block sequences and the next mapping key (e.g. "# Ignored products…", "# Server URL…"). ruamel.yaml stores these on the last sequence item's internal comment attributes; the merge logic now transplants them to the replacement sequence.
 - **`watched_urls` no longer reappears in config.yaml** — the legacy migration field was included in `model_dump()` output, causing `save_config` to write `watched_urls: []` back on every save. Fixed with `exclude=True` on the Pydantic field.
 
 ---
