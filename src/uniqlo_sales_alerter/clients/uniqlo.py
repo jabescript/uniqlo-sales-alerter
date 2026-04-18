@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -215,6 +216,20 @@ class UniqloClient:
     # Public API
     # ------------------------------------------------------------------
 
+    _SOURCE_PARAMS: dict[str, tuple[str, dict[str, str]]] = {
+        "v5_disc": ("v5", {"flagCodes": "discount"}),
+        "v5_ltd": ("v5", {"flagCodes": "limitedOffer"}),
+        "v3_disc": ("v3", {"flagCodes": "discount"}),
+        "v3_ltd": ("v3", {"flagCodes": "limitedOffer"}),
+    }
+
+    def _fetch_source(self, source: str) -> Awaitable[list[UniqloProduct]]:
+        """Return a coroutine for the named listing source."""
+        version, params = self._SOURCE_PARAMS[source]
+        if version == "v3":
+            return self._fetch_all_v3(extra_params=params)
+        return self._fetch_all(extra_params=params)
+
     async def fetch_sale_products(self) -> list[UniqloProduct]:
         """Fetch products flagged as on sale.
 
@@ -225,21 +240,6 @@ class UniqloClient:
         caps = self._config.capabilities
         sources = caps.listing_sources
 
-        _SOURCE_FETCHERS = {
-            "v5_disc": lambda: self._fetch_all(
-                extra_params={"flagCodes": "discount"},
-            ),
-            "v5_ltd": lambda: self._fetch_all(
-                extra_params={"flagCodes": "limitedOffer"},
-            ),
-            "v3_disc": lambda: self._fetch_all_v3(
-                extra_params={"flagCodes": "discount"},
-            ),
-            "v3_ltd": lambda: self._fetch_all_v3(
-                extra_params={"flagCodes": "limitedOffer"},
-            ),
-        }
-
         tasks: list[asyncio.Task] = []
         labels: list[str] = []
         for src in sources:
@@ -249,8 +249,8 @@ class UniqloClient:
                         extra_params={"path": path_id},
                     ))
                     labels.append(f"path:{path_id}")
-            elif src in _SOURCE_FETCHERS:
-                tasks.append(_SOURCE_FETCHERS[src]())
+            elif src in self._SOURCE_PARAMS:
+                tasks.append(self._fetch_source(src))
                 labels.append(src)
 
         results = await asyncio.gather(*tasks)
@@ -338,14 +338,22 @@ class UniqloClient:
     # Pagination
     # ------------------------------------------------------------------
 
-    async def _fetch_all(
-        self, extra_params: dict[str, str] | None = None,
+    async def _paginate(
+        self,
+        fetch_page: Callable[
+            [int, dict[str, str] | None],
+            Awaitable[UniqloApiResponse | None],
+        ],
+        extra_params: dict[str, str] | None = None,
+        *,
+        label: str = "",
     ) -> list[UniqloProduct]:
+        """Generic paginator shared by v5 and v3 endpoints."""
         all_products: list[UniqloProduct] = []
         offset = 0
 
         while True:
-            page = await self._fetch_page(offset, extra_params)
+            page = await fetch_page(offset, extra_params)
             if page is None:
                 break
 
@@ -354,16 +362,32 @@ class UniqloClient:
             offset += PAGE_SIZE
 
             logger.debug(
-                "Fetched %d / %d products",
-                len(all_products),
-                total,
+                "Fetched %d / %d products%s",
+                len(all_products), total,
+                f" ({label})" if label else "",
             )
 
             if offset >= total:
                 break
 
-        logger.info("Fetched %d products in total", len(all_products))
+        if all_products:
+            logger.info(
+                "Fetched %d products in total%s",
+                len(all_products),
+                f" ({label})" if label else "",
+            )
         return all_products
+
+    async def _fetch_all(
+        self, extra_params: dict[str, str] | None = None,
+    ) -> list[UniqloProduct]:
+        return await self._paginate(self._fetch_page, extra_params)
+
+    async def _fetch_all_v3(
+        self, extra_params: dict[str, str] | None = None,
+    ) -> list[UniqloProduct]:
+        """Paginate the v3 products endpoint and normalise each item to v5 format."""
+        return await self._paginate(self._fetch_page_v3, extra_params, label="v3")
 
     async def _fetch_page(
         self,
@@ -402,29 +426,6 @@ class UniqloClient:
     # v3 API support (used by Thailand, Philippines, …)
     # ------------------------------------------------------------------
 
-    async def _fetch_all_v3(
-        self, extra_params: dict[str, str] | None = None,
-    ) -> list[UniqloProduct]:
-        """Paginate the v3 products endpoint and normalise each item to v5 format."""
-        all_products: list[UniqloProduct] = []
-        offset = 0
-
-        while True:
-            page = await self._fetch_page_v3(offset, extra_params)
-            if page is None:
-                break
-
-            all_products.extend(page.result.items)
-            total = page.result.pagination.total
-            offset += PAGE_SIZE
-
-            if offset >= total:
-                break
-
-        if all_products:
-            logger.info("Fetched %d products from v3 API", len(all_products))
-        return all_products
-
     async def _fetch_page_v3(
         self,
         offset: int,
@@ -447,6 +448,7 @@ class UniqloClient:
             data = resp.json()
 
             if data.get("status") != "ok":
+                logger.error("v3 API returned non-ok status: %s", data)
                 return None
 
             items = data.get("result", {}).get("items", [])
@@ -456,7 +458,7 @@ class UniqloClient:
             return UniqloApiResponse.model_validate(data)
 
         except Exception:
-            logger.debug(
-                "v3 page fetch at offset %d failed", offset, exc_info=True,
+            logger.exception(
+                "Failed to fetch v3 page at offset %d", offset,
             )
             return None

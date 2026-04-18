@@ -5,13 +5,18 @@ from __future__ import annotations
 import html
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from uniqlo_sales_alerter.models.products import SaleCheckResult, SaleItem
 
 router = APIRouter(prefix="/api/v1")
 actions_router = APIRouter(prefix="/actions")
+
+
+def _get_app_state(request: Request):
+    """FastAPI dependency — extracts the application state set during lifespan."""
+    return request.app.state.app_state
 
 _NO_RESULT = HTTPException(
     status_code=503, detail="No sale check has been run yet",
@@ -53,10 +58,9 @@ def _restore_secrets(body: dict[str, Any], current: object) -> None:
             node[key] = src
 
 
-def _latest_result() -> SaleCheckResult:
-    from uniqlo_sales_alerter.main import state
-
-    result = state.sale_checker.last_result
+def _latest_result(app_state) -> SaleCheckResult:
+    """Extract the latest sale-check result, or raise 503."""
+    result = app_state.sale_checker.last_result
     if result is None:
         raise _NO_RESULT
     return result
@@ -64,6 +68,7 @@ def _latest_result() -> SaleCheckResult:
 
 @router.get("/sales", response_model=SaleCheckResult)
 async def get_sales(
+    app_state=Depends(_get_app_state),
     gender: str | None = Query(
         None, description="Filter by gender (men/women/unisex)",
     ),
@@ -72,7 +77,7 @@ async def get_sales(
     ),
 ) -> SaleCheckResult:
     """Return the latest cached sale-check results, optionally filtered."""
-    result = _latest_result()
+    result = _latest_result(app_state)
     deals = result.matching_deals
 
     if gender is not None:
@@ -97,17 +102,17 @@ async def get_sales(
 
 
 @router.post("/sales/check", response_model=SaleCheckResult)
-async def trigger_check() -> SaleCheckResult:
+async def trigger_check(app_state=Depends(_get_app_state)) -> SaleCheckResult:
     """Trigger an immediate sale check."""
-    from uniqlo_sales_alerter.main import run_sale_check, state
+    from uniqlo_sales_alerter.main import run_sale_check
 
-    return await run_sale_check(state)
+    return await run_sale_check(app_state)
 
 
 @router.get("/products/{product_id}", response_model=SaleItem)
-async def get_product(product_id: str) -> SaleItem:
+async def get_product(product_id: str, app_state=Depends(_get_app_state)) -> SaleItem:
     """Look up a specific product in the latest results."""
-    result = _latest_result()
+    result = _latest_result(app_state)
     for deal in result.matching_deals:
         if deal.product_id == product_id:
             return deal
@@ -118,28 +123,32 @@ async def get_product(product_id: str) -> SaleItem:
 
 
 @router.get("/config")
-async def get_config() -> dict[str, Any]:
+async def get_config(app_state=Depends(_get_app_state)) -> dict[str, Any]:
     """Return the active configuration (secrets are redacted)."""
-    from uniqlo_sales_alerter.main import state
-
-    return _redact_secrets(state.config.model_dump())
+    return _redact_secrets(app_state.config.model_dump())
 
 
 @router.put("/config")
-async def update_config(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+async def update_config(
+    request: Request,
+    app_state=Depends(_get_app_state),
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
     """Validate, persist, and reload configuration."""
-    from uniqlo_sales_alerter.config import AppConfig, save_config
-    from uniqlo_sales_alerter.main import reload_config, state
+    from pydantic import ValidationError
 
-    _restore_secrets(body, state.config)
+    from uniqlo_sales_alerter.config import AppConfig, save_config
+    from uniqlo_sales_alerter.main import reload_config
+
+    _restore_secrets(body, app_state.config)
 
     try:
         config = AppConfig.model_validate(body)
-    except Exception as exc:
+    except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     save_config(config)
-    await reload_config()
+    await reload_config(request.app)
 
     return {
         "status": "ok",
@@ -175,20 +184,20 @@ You can close this tab.</p>
     return HTMLResponse(page)
 
 
-async def _resolve_name(product_id: str) -> str | None:
+async def _resolve_name(product_id: str, app_state) -> str | None:
     """Fetch product name from the Uniqlo API. Returns ``None`` if not found."""
-    from uniqlo_sales_alerter.main import state
-
-    products = await state.sale_checker.http_client.fetch_products_by_ids(
+    products = await app_state.sale_checker.http_client.fetch_products_by_ids(
         [product_id],
     )
     return products[0].name if products else None
 
 
 @router.get("/products/{product_id}/verify")
-async def verify_product(product_id: str) -> dict[str, Any]:
+async def verify_product(
+    product_id: str, app_state=Depends(_get_app_state),
+) -> dict[str, Any]:
     """Check if a product exists in the Uniqlo API and return its name."""
-    name = await _resolve_name(product_id)
+    name = await _resolve_name(product_id, app_state)
     if name is None:
         raise HTTPException(
             status_code=404,
@@ -197,25 +206,25 @@ async def verify_product(product_id: str) -> dict[str, Any]:
     return {"product_id": product_id, "name": name}
 
 
-async def _save_and_reload(data: dict) -> None:
+async def _save_and_reload(data: dict, app) -> None:
     """Validate, persist, and reload from a raw config dict."""
     from uniqlo_sales_alerter.config import AppConfig, save_config
     from uniqlo_sales_alerter.main import reload_config
 
     config = AppConfig.model_validate(data)
     save_config(config)
-    await reload_config()
+    await reload_config(app)
 
 
 @actions_router.get("/ignore/{product_id}")
 async def action_ignore(
+    request: Request,
     product_id: str,
+    app_state=Depends(_get_app_state),
     name: str = Query(""),
 ) -> HTMLResponse:
     """Add a product to the ignore list (browser-friendly)."""
-    from uniqlo_sales_alerter.main import state
-
-    current = state.config
+    current = app_state.config
     pid_upper = product_id.upper()
     if any(p.id.upper() == pid_upper for p in current.filters.ignored_products):
         return _action_page(
@@ -225,7 +234,7 @@ async def action_ignore(
         )
 
     if not name:
-        name = await _resolve_name(product_id) or ""
+        name = await _resolve_name(product_id, app_state) or ""
     if not name:
         return _action_page(
             "Product not found",
@@ -237,7 +246,7 @@ async def action_ignore(
     data["filters"]["ignored_products"].append(
         {"id": product_id, "name": name},
     )
-    await _save_and_reload(data)
+    await _save_and_reload(data, request.app)
 
     return _action_page(
         "Product ignored",
@@ -247,13 +256,13 @@ async def action_ignore(
 
 @actions_router.get("/unwatch/{product_id}")
 async def action_unwatch(
+    request: Request,
     product_id: str,
+    app_state=Depends(_get_app_state),
     name: str = Query(""),
 ) -> HTMLResponse:
     """Remove a product from the watch list (browser-friendly)."""
-    from uniqlo_sales_alerter.main import state
-
-    current = state.config
+    current = app_state.config
     pid_upper = product_id.upper()
     before = len(current.filters.watched_variants)
     kept = [
@@ -272,7 +281,7 @@ async def action_unwatch(
     data["filters"]["watched_variants"] = [
         wv.model_dump() for wv in kept
     ]
-    await _save_and_reload(data)
+    await _save_and_reload(data, request.app)
 
     display = html.escape(name or product_id)
     return _action_page(
@@ -283,20 +292,21 @@ async def action_unwatch(
 
 @actions_router.get("/watch/{product_id}")
 async def action_watch(
+    request: Request,
     product_id: str,
+    app_state=Depends(_get_app_state),
     name: str = Query(""),
     url: str = Query(""),
 ) -> HTMLResponse:
     """Add a variant to the watch list (browser-friendly)."""
     from uniqlo_sales_alerter.config import parse_uniqlo_url
-    from uniqlo_sales_alerter.main import state
 
     fields = parse_uniqlo_url(url) if url else {}
     color = fields.get("color", "")
     size = fields.get("size", "")
     pid_upper = product_id.upper()
 
-    current = state.config
+    current = app_state.config
     if any(
         wv.id.upper() == pid_upper
         and wv.color == color and wv.size == size
@@ -309,7 +319,7 @@ async def action_watch(
         )
 
     if not name:
-        name = await _resolve_name(product_id) or ""
+        name = await _resolve_name(product_id, app_state) or ""
     if not name:
         return _action_page(
             "Product not found",
@@ -322,7 +332,7 @@ async def action_watch(
     }
     data = current.model_dump()
     data["filters"]["watched_variants"].append(entry)
-    await _save_and_reload(data)
+    await _save_and_reload(data, request.app)
 
     return _action_page(
         "Variant watched",

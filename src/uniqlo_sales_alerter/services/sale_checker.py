@@ -16,6 +16,7 @@ from uniqlo_sales_alerter.models.products import (
     SaleItem,
     UniqloProduct,
     UniqloSize,
+    build_product_url,
 )
 
 if TYPE_CHECKING:
@@ -249,7 +250,7 @@ class SaleChecker:
         results: list[SaleItem] = []
 
         for product in products:
-            is_watched = self._is_watched(product.product_id, watched)
+            is_watched = self._matches_any(product.product_id, watched)
 
             if self._is_ignored(product.product_id) and not is_watched:
                 continue
@@ -303,10 +304,7 @@ class SaleChecker:
                 size_name = code_to_name.get(wv.size)
                 if size_name is None:
                     continue
-                wv_url = (
-                    f"{base}/{pid}/{pg}"
-                    f"?colorDisplayCode={wv.color}&sizeDisplayCode={wv.size}"
-                )
+                wv_url = build_product_url(base, pid, pg, wv.color, wv.size)
                 if size_name in final_sizes:
                     idx = final_sizes.index(size_name)
                     final_urls[idx] = wv_url
@@ -346,10 +344,6 @@ class SaleChecker:
         if sizes.one_size:
             all_names.add("ONE SIZE")
         return all_names
-
-    @staticmethod
-    def _is_watched(product_id: str, watched: set[str]) -> bool:
-        return SaleChecker._matches_any(product_id, watched)
 
     @staticmethod
     def _matches_gender(product: UniqloProduct, gender_filter: set[str]) -> bool:
@@ -398,11 +392,10 @@ class SaleChecker:
         pid = product.product_id
         pg = product.price_group
         color = product.representative_color_display_code
-        urls: list[str] = []
-        for s in sizes:
-            url = f"{base}/{pid}/{pg}?colorDisplayCode={color}&sizeDisplayCode={s.display_code}"
-            urls.append(url)
-        return urls
+        return [
+            build_product_url(base, pid, pg, color, s.display_code)
+            for s in sizes
+        ]
 
     # ------------------------------------------------------------------
     # Real-time stock verification
@@ -482,11 +475,9 @@ class SaleChecker:
                 color_dc, size_dc, color_name = best
                 verified_sizes.append(size_name)
                 verified_color_names.append(color_name)
-                url = (
-                    f"{base}/{item.product_id}/{item.price_group}"
-                    f"?colorDisplayCode={color_dc}&sizeDisplayCode={size_dc}"
+                verified_urls.append(
+                    build_product_url(base, item.product_id, item.price_group, color_dc, size_dc)
                 )
-                verified_urls.append(url)
 
         if not verified_sizes:
             all_oos = stock_map and all(
@@ -535,13 +526,10 @@ class SaleChecker:
                 color_dc = color_obj.get("displayCode", "")
                 color_name = color_obj.get("name", "")
                 size_dc = l2.get("size", {}).get("displayCode", "")
-                url = (
-                    f"{base}/{item.product_id}/{item.price_group}"
-                    f"?colorDisplayCode={color_dc}"
-                    f"&sizeDisplayCode={size_dc}"
-                )
                 rebuilt_sizes.append(size_name)
-                rebuilt_urls.append(url)
+                rebuilt_urls.append(
+                    build_product_url(base, item.product_id, item.price_group, color_dc, size_dc)
+                )
                 rebuilt_colors.append(color_name)
             else:
                 rebuilt_sizes.append(size_name)

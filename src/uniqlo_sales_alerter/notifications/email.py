@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import html as html_mod
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.models.products import SaleItem
-from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
+from uniqlo_sales_alerter.notifications.base import (
+    PROJECT_URL,
+    DealActions,
+    format_price,
+    resolve_color_image,
+)
 
 if TYPE_CHECKING:
     from uniqlo_sales_alerter.config import EmailChannelConfig
@@ -18,24 +24,11 @@ logger = logging.getLogger(__name__)
 _SMTP_TIMEOUT = 30
 
 
-def _image_for_variant_url(
-    url: str, color_images: dict[str, str], fallback: str | None,
-) -> str | None:
-    """Pick the product image matching the variant URL's colour code."""
-    if color_images and url:
-        from urllib.parse import parse_qs, urlparse
-        params = parse_qs(urlparse(url).query)
-        color_code = params.get("colorDisplayCode", [""])[0]
-        if color_code and color_code in color_images:
-            return color_images[color_code]
-    return fallback
-
-
 def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     """Expand a multi-size deal into one ``SaleItem`` per size+colour variant."""
     if not deal.product_urls or len(deal.available_sizes) <= 1:
         if deal.product_urls and deal.color_images:
-            img = _image_for_variant_url(
+            img = resolve_color_image(
                 deal.product_urls[0], deal.color_images, deal.image_url,
             )
             if img != deal.image_url:
@@ -45,7 +38,7 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     variants: list[SaleItem] = []
     for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls)):
         cn = color_names[i] if i < len(color_names) else ""
-        img = _image_for_variant_url(url, deal.color_images, deal.image_url)
+        img = resolve_color_image(url, deal.color_images, deal.image_url)
         variants.append(deal.model_copy(update={
             "available_sizes": [sz],
             "product_urls": [url],
@@ -63,10 +56,11 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
 
     rows: list[str] = []
     for variant in variants:
+        safe_name = html_mod.escape(variant.name)
         watched_badge = ' <span style="color:gold;">⭐ Watched</span>' if variant.is_watched else ""
         variant_url = variant.product_urls[0] if variant.product_urls else ""
         img_html = (
-            f'<img src="{variant.image_url}" alt="{variant.name}" '
+            f'<img src="{variant.image_url}" alt="{safe_name}" '
             f'style="max-width:120px;max-height:160px;border-radius:4px;" />'
             if variant.image_url
             else ""
@@ -77,31 +71,32 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
         )
         color_name = variant.color_names[0] if variant.color_names else ""
         color_html = (
-            f'<small>Color: <strong>{color_name}</strong></small><br/>'
+            f'<small>Color: <strong>{html_mod.escape(color_name)}</strong></small><br/>'
             if color_name else ""
         )
         size_links = " &middot; ".join(
             f'<a href="{url}">{sz}</a>'
             for sz, url in zip(variant.available_sizes, variant.product_urls)
         ) or ", ".join(variant.available_sizes)
-        if variant.has_known_discount and variant.discount_percentage > 0:
+        fp = format_price(variant)
+        if fp.show_strikethrough:
             price_html = (
                 f'<span style="text-decoration:line-through;color:#999;">'
-                f'{variant.currency_symbol}{variant.original_price:.2f}</span> &rarr; '
+                f'{fp.original_text}</span> &rarr; '
                 f'<span style="color:#c0392b;font-weight:bold;">'
-                f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
-                f'<span style="color:#27ae60;">(-{variant.discount_percentage:.0f}%)</span>'
+                f'{fp.sale_text}</span> '
+                f'<span style="color:#27ae60;">({fp.discount_label})</span>'
             )
-        elif not variant.has_known_discount:
+        elif fp.show_sale_badge:
             price_html = (
                 f'<span style="color:#c0392b;font-weight:bold;">'
-                f'{variant.currency_symbol}{variant.sale_price:.2f}</span> '
-                f'<span style="color:#27ae60;font-weight:bold;">Sale</span>'
+                f'{fp.sale_text}</span> '
+                f'<span style="color:#27ae60;font-weight:bold;">'
+                f'{fp.discount_label}</span>'
             )
         else:
             price_html = (
-                f'<span style="font-weight:bold;">'
-                f'{variant.currency_symbol}{variant.sale_price:.2f}</span>'
+                f'<span style="font-weight:bold;">{fp.sale_text}</span>'
             )
         actions = DealActions(variant, server_url)
         action_html = ""
@@ -131,7 +126,7 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
             <tr style="border-bottom:1px solid #eee;">
                 <td style="padding:12px;">{img_tag}</td>
                 <td style="padding:12px;">
-                    <strong>{variant.name}</strong>{watched_badge}<br/>
+                    <strong>{safe_name}</strong>{watched_badge}<br/>
                     {color_html}
                     {price_html}<br/>
                     <small>Size: {size_links}</small>

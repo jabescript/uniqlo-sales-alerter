@@ -1,13 +1,82 @@
-"""Protocol that all notification channels must satisfy."""
+"""Protocol and shared helpers for notification channels."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from uniqlo_sales_alerter.models.products import SaleItem
 
 PROJECT_URL = "https://github.com/kequach/uniqlo-sales-alerter"
+
+
+# ---------------------------------------------------------------------------
+# Shared formatting helpers (used by all notification channels)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FormattedPrice:
+    """Channel-agnostic price data pre-computed from a :class:`SaleItem`.
+
+    Channels only need to decide *how* to render each field (ANSI, HTML,
+    MarkdownV2, etc.) — the business logic lives here once.
+    """
+
+    sale_text: str
+    original_text: str
+    discount_label: str
+    show_strikethrough: bool
+    show_sale_badge: bool
+
+
+def format_price(deal: SaleItem) -> FormattedPrice:
+    """Derive display-ready price fields from *deal*."""
+    sym = deal.currency_symbol
+    sale = f"{sym}{deal.sale_price:.2f}"
+    if deal.has_known_discount and deal.discount_percentage > 0:
+        return FormattedPrice(
+            sale_text=sale,
+            original_text=f"{sym}{deal.original_price:.2f}",
+            discount_label=f"-{deal.discount_percentage:.0f}%",
+            show_strikethrough=True,
+            show_sale_badge=False,
+        )
+    if not deal.has_known_discount:
+        return FormattedPrice(
+            sale_text=sale,
+            original_text="",
+            discount_label="Sale",
+            show_strikethrough=False,
+            show_sale_badge=True,
+        )
+    return FormattedPrice(
+        sale_text=sale,
+        original_text="",
+        discount_label="",
+        show_strikethrough=False,
+        show_sale_badge=False,
+    )
+
+
+def resolve_color_image(
+    url: str,
+    color_images: dict[str, str],
+    fallback: str | None,
+) -> str | None:
+    """Pick the product image matching the variant URL's colour code."""
+    if color_images and url:
+        params = parse_qs(urlparse(url).query)
+        color_code = params.get("colorDisplayCode", [""])[0]
+        if color_code and color_code in color_images:
+            return color_images[color_code]
+    return fallback
+
+
+def unique_colors(deal: SaleItem) -> list[str]:
+    """Deduplicated, non-empty colour names preserving insertion order."""
+    return list(dict.fromkeys(cn for cn in deal.color_names if cn))
 
 
 @runtime_checkable

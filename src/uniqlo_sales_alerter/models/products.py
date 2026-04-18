@@ -9,6 +9,33 @@ from pydantic import BaseModel, Field, field_validator
 
 _DEFAULT_CURRENCY = "€"
 
+
+# ---------------------------------------------------------------------------
+# Shared URL builder
+# ---------------------------------------------------------------------------
+
+
+def build_product_url(
+    base: str,
+    product_id: str,
+    price_group: str,
+    color: str = "",
+    size: str = "",
+) -> str:
+    """Reconstruct a Uniqlo product page URL from component fields.
+
+    ``base`` is :pyattr:`AppConfig.product_page_base` (e.g.
+    ``https://www.uniqlo.com/de/de/products``).
+    """
+    params: list[str] = []
+    if color:
+        params.append(f"colorDisplayCode={color}")
+    if size:
+        params.append(f"sizeDisplayCode={size}")
+    qs = ("?" + "&".join(params)) if params else ""
+    return f"{base}/{product_id}/{price_group}{qs}"
+
+
 # ---------------------------------------------------------------------------
 # Uniqlo Commerce API response models (partial — only fields we need)
 # ---------------------------------------------------------------------------

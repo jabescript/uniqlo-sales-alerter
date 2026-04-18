@@ -249,7 +249,7 @@ class FilterConfig(BaseModel):
     sizes: SizeFilters = Field(default_factory=SizeFilters)
     watched_variants: list[WatchedVariant] = Field(default_factory=list)
     ignored_products: list[IgnoredProduct] = Field(default_factory=list)
-    watched_urls: list[str] = Field(default_factory=list)
+    watched_urls: list[str] = Field(default_factory=list, exclude=True)
 
     @field_validator("ignored_products", mode="before")
     @classmethod

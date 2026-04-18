@@ -5,7 +5,12 @@ from __future__ import annotations
 import sys
 
 from uniqlo_sales_alerter.models.products import SaleItem
-from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
+from uniqlo_sales_alerter.notifications.base import (
+    PROJECT_URL,
+    DealActions,
+    format_price,
+    unique_colors,
+)
 
 # ANSI colour codes (disabled if stdout is not a terminal)
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -19,23 +24,24 @@ def _ansi(code: str, text: str) -> str:
 def _format_deal(deal: SaleItem, index: int, server_url: str = "") -> str:
     watched = _ansi("33", " [WATCHED]") if deal.is_watched else ""
     header = _ansi("1", f"  {index}. {deal.name}") + watched
-    if deal.has_known_discount and deal.discount_percentage > 0:
+    fp = format_price(deal)
+    if fp.show_strikethrough:
         price_line = (
-            f"     {_ansi('9', f'{deal.currency_symbol}{deal.original_price:.2f}')}"
-            f" -> {_ansi('32;1', f'{deal.currency_symbol}{deal.sale_price:.2f}')}"
-            f"  {_ansi('32', f'(-{deal.discount_percentage:.0f}%)')}"
+            f"     {_ansi('9', fp.original_text)}"
+            f" -> {_ansi('32;1', fp.sale_text)}"
+            f"  {_ansi('32', f'({fp.discount_label})')}"
         )
-    elif not deal.has_known_discount:
+    elif fp.show_sale_badge:
         price_line = (
-            f"     {_ansi('32;1', f'{deal.currency_symbol}{deal.sale_price:.2f}')}"
-            f"  {_ansi('32', '(Sale)')}"
+            f"     {_ansi('32;1', fp.sale_text)}"
+            f"  {_ansi('32', f'({fp.discount_label})')}"
         )
     else:
-        price_line = f"     {deal.currency_symbol}{deal.sale_price:.2f}"
+        price_line = f"     {fp.sale_text}"
     lines = [header, price_line]
-    unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
-    if unique_colors:
-        lines.append(f"     Color: {_ansi('35', ' · '.join(unique_colors))}")
+    colors = unique_colors(deal)
+    if colors:
+        lines.append(f"     Color: {_ansi('35', ' · '.join(colors))}")
     for size, url in zip(deal.available_sizes, deal.product_urls):
         lines.append(f"     {_ansi('36', size):>8s}  {url}")
     actions = DealActions(deal, server_url)

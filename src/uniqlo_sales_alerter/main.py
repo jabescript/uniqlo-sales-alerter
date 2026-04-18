@@ -9,13 +9,17 @@ from datetime import datetime, time, timedelta
 from typing import AsyncIterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from uniqlo_sales_alerter.api.routes import _redact_secrets, actions_router, router
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
 from uniqlo_sales_alerter.config import AppConfig, load_config, save_config
-from uniqlo_sales_alerter.models.products import SaleCheckResult, UniqloProduct
+from uniqlo_sales_alerter.models.products import (
+    SaleCheckResult,
+    UniqloProduct,
+    build_product_url,
+)
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 from uniqlo_sales_alerter.settings_ui import build_settings_page
@@ -38,9 +42,6 @@ class AppState:
     last_check_at: datetime | None = None
 
 
-state: AppState  # module-level reference set during lifespan
-
-
 def _in_quiet_hours(config: AppConfig) -> bool:
     """Return ``True`` if the current local time falls within the configured quiet window."""
     quiet = config.quiet_hours
@@ -55,18 +56,6 @@ def _in_quiet_hours(config: AppConfig) -> bool:
         return start <= now < end
     # Wraps midnight (e.g. 23:00 → 06:00)
     return now >= start or now < end
-
-
-def _build_product_url(base: str, product_id: str, price_group: str,
-                       color: str = "", size: str = "") -> str:
-    """Reconstruct a Uniqlo product page URL from component fields."""
-    params = []
-    if color:
-        params.append(f"colorDisplayCode={color}")
-    if size:
-        params.append(f"sizeDisplayCode={size}")
-    qs = ("?" + "&".join(params)) if params else ""
-    return f"{base}/{product_id}/{price_group}{qs}"
 
 
 def _find_color_name(l2s: list[dict], color_code: str) -> str:
@@ -136,7 +125,7 @@ async def _enrich_config(config: AppConfig, client: UniqloClient) -> bool:
             changed = True
         if not ip.url:
             pg = prod.price_group if prod else "00"
-            ip.url = _build_product_url(base, ip.id, pg)
+            ip.url = build_product_url(base, ip.id, pg)
             changed = True
 
     for wv in incomplete_variants:
@@ -147,7 +136,7 @@ async def _enrich_config(config: AppConfig, client: UniqloClient) -> bool:
             changed = True
 
         if not wv.url:
-            wv.url = _build_product_url(
+            wv.url = build_product_url(
                 base, wv.id, wv.price_group, wv.color, wv.size,
             )
             changed = True
@@ -249,47 +238,49 @@ async def _try_enrich(config: AppConfig, client: UniqloClient) -> None:
         logger.warning("Watched-variant enrichment failed — will retry later")
 
 
-async def reload_config() -> AppConfig:
+async def reload_config(app: FastAPI) -> AppConfig:
     """Reload configuration from YAML (without re-applying env overrides)."""
-    global state
-    state.scheduler.remove_all_jobs()
-    await state.sale_checker.close()
+    current: AppState = app.state.app_state
+    current.scheduler.remove_all_jobs()
+    await current.sale_checker.close()
 
     config = load_config(apply_env_overrides=False)
     checker = SaleChecker(config)
     await _try_enrich(config, checker.http_client)
 
     dispatcher = NotificationDispatcher(config)
-    state = AppState(
+    app.state.app_state = AppState(
         config=config,
         sale_checker=checker,
         dispatcher=dispatcher,
-        scheduler=state.scheduler,
+        scheduler=current.scheduler,
     )
 
-    _add_check_job(state)
+    _add_check_job(app.state.app_state)
     logger.info("Config reloaded")
     return config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global state
     config = load_config()
     save_config(config)
 
     checker = SaleChecker(config)
     dispatcher = NotificationDispatcher(config)
-    state = AppState(config=config, sale_checker=checker, dispatcher=dispatcher)
+    app.state.app_state = AppState(
+        config=config, sale_checker=checker, dispatcher=dispatcher,
+    )
 
     await _try_enrich(config, checker.http_client)
 
-    _add_check_job(state)
-    state.scheduler.start()
+    app_state: AppState = app.state.app_state
+    _add_check_job(app_state)
+    app_state.scheduler.start()
 
     if config.notifications.check_on_startup:
         try:
-            await run_sale_check(state)
+            await run_sale_check(app_state)
         except Exception:
             logger.exception("Initial sale check failed — will retry on schedule")
     else:
@@ -297,8 +288,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
-    state.scheduler.shutdown(wait=False)
-    await state.sale_checker.close()
+    app_state = app.state.app_state
+    app_state.scheduler.shutdown(wait=False)
+    await app_state.sale_checker.close()
     logger.info("Scheduler stopped")
 
 
@@ -319,7 +311,8 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page() -> HTMLResponse:
+async def settings_page(request: Request) -> HTMLResponse:
     """Serve the configuration web UI."""
-    config_data = _redact_secrets(state.config.model_dump())
+    app_state: AppState = request.app.state.app_state
+    config_data = _redact_secrets(app_state.config.model_dump())
     return HTMLResponse(build_settings_page(config_data))

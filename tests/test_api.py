@@ -30,22 +30,19 @@ def _make_result(deals: list[SaleItem] | None = None) -> SaleCheckResult:
 @pytest.fixture()
 def client():
     """Create a TestClient with a pre-populated state (no actual API calls)."""
+    from uniqlo_sales_alerter.main import AppState, app
+
     config = AppConfig()
     checker = SaleChecker(config)
     dispatcher = NotificationDispatcher(config)
     checker.last_result = _make_result()
 
-    import uniqlo_sales_alerter.main as main_mod
-
-    main_mod.state = main_mod.AppState(
+    app.state.app_state = AppState(
         config=config,
         sale_checker=checker,
         dispatcher=dispatcher,
     )
 
-    from uniqlo_sales_alerter.main import app
-
-    # Disable the lifespan (we manage state manually above)
     app.router.lifespan_context = None  # type: ignore[assignment]
     return TestClient(app)
 
@@ -67,20 +64,20 @@ class TestSalesEndpoint:
         assert data["matching_deals"][0]["product_id"] == "E123456-000"
 
     def test_returns_503_when_no_result(self, client: TestClient):
-        import uniqlo_sales_alerter.main as main_mod
+        from uniqlo_sales_alerter.main import app
 
-        main_mod.state.sale_checker.last_result = None
+        app.state.app_state.sale_checker.last_result = None
         resp = client.get("/api/v1/sales")
         assert resp.status_code == 503
 
     def test_filter_by_gender(self, client: TestClient):
-        import uniqlo_sales_alerter.main as main_mod
+        from uniqlo_sales_alerter.main import app
 
         deals = [
             _sample_deal(product_id="E001", gender="MEN"),
             _sample_deal(product_id="E002", gender="WOMEN"),
         ]
-        main_mod.state.sale_checker.last_result = _make_result(deals)
+        app.state.app_state.sale_checker.last_result = _make_result(deals)
 
         resp = client.get("/api/v1/sales?gender=women")
         data = resp.json()
@@ -88,13 +85,13 @@ class TestSalesEndpoint:
         assert data["matching_deals"][0]["product_id"] == "E002"
 
     def test_filter_by_min_discount(self, client: TestClient):
-        import uniqlo_sales_alerter.main as main_mod
+        from uniqlo_sales_alerter.main import app
 
         deals = [
             _sample_deal(product_id="E001", discount_percentage=60),
             _sample_deal(product_id="E002", discount_percentage=30),
         ]
-        main_mod.state.sale_checker.last_result = _make_result(deals)
+        app.state.app_state.sale_checker.last_result = _make_result(deals)
 
         resp = client.get("/api/v1/sales?min_discount=50")
         data = resp.json()
@@ -115,9 +112,9 @@ class TestProductEndpoint:
 
 class TestConfigEndpoint:
     def test_get_config_redacts_secrets(self, client: TestClient):
-        import uniqlo_sales_alerter.main as main_mod
+        from uniqlo_sales_alerter.main import app
 
-        main_mod.state.config = AppConfig.model_validate({
+        app.state.app_state.config = AppConfig.model_validate({
             "notifications": {
                 "channels": {
                     "telegram": {"enabled": True, "bot_token": "secret_tok", "chat_id": "123"},
@@ -134,11 +131,12 @@ class TestConfigEndpoint:
 
 class TestTriggerCheck:
     def test_trigger_check(self, client: TestClient):
-        import uniqlo_sales_alerter.main as main_mod
+        from uniqlo_sales_alerter.main import app
 
         result = _make_result()
         with patch.object(
-            main_mod.state.sale_checker, "check", new_callable=AsyncMock, return_value=result
+            app.state.app_state.sale_checker,
+            "check", new_callable=AsyncMock, return_value=result,
         ):
             resp = client.post("/api/v1/sales/check")
             assert resp.status_code == 200

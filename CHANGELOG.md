@@ -4,6 +4,19 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
+## v1.5.0 — 2026-04-18
+
+### Code quality
+
+- **Architecture refactor** — DRY: shared price/colour/image helpers in `notifications/base.py`, unified pagination (`_paginate`), single `build_product_url`. Replaced global `state` with FastAPI `Depends()` injection. Split `_build_report` into `_render_card` + `_REPORT_CSS`. Added `html.escape()`, narrowed broad `except` blocks, aligned v3/v5 logging.
+- **End-to-end test** (`test_e2e_html_preview.py`) — new test suite that hits the live Uniqlo API, runs the full sale-check pipeline, generates an HTML report, and cross-verifies: every deal has required fields, valid product URLs with correct query params, consistent discount percentages, and that the report faithfully includes all deal names, prices, sizes, and action links. Also spot-checks that product IDs and page URLs resolve in the real API. Skips gracefully when the API is unreachable.
+
+### Bug fixes
+
+- **`watched_urls` no longer reappears in config.yaml** — the legacy migration field was included in `model_dump()` output, causing `save_config` to write `watched_urls: []` back on every save. Fixed with `exclude=True` on the Pydantic field.
+
+---
+
 ## v1.4.0 — 2026-04-17
 
 ### Docs

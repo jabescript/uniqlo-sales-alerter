@@ -6,7 +6,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.models.products import SaleItem
-from uniqlo_sales_alerter.notifications.base import PROJECT_URL, DealActions
+from uniqlo_sales_alerter.notifications.base import (
+    PROJECT_URL,
+    DealActions,
+    format_price,
+    resolve_color_image,
+    unique_colors,
+)
 
 if TYPE_CHECKING:
     from uniqlo_sales_alerter.config import TelegramChannelConfig
@@ -24,22 +30,22 @@ def _escape_md(text: str) -> str:
 def _build_caption(deal: SaleItem, server_url: str = "") -> str:
     """Build a MarkdownV2 caption for a single deal."""
     name = _escape_md(deal.name)
-    sym = _escape_md(deal.currency_symbol)
-    sale = _escape_md(f"{deal.sale_price:.2f}")
+    fp = format_price(deal)
 
-    if deal.has_known_discount and deal.discount_percentage > 0:
-        original = _escape_md(f"{deal.original_price:.2f}")
-        pct = _escape_md(f"{deal.discount_percentage:.0f}%")
-        price_line = f"~{sym}{original}~ ➜ {sym}{sale} \\(\\-{pct}\\)"
-    elif not deal.has_known_discount:
-        price_line = f"{sym}{sale} ✦ Sale"
+    if fp.show_strikethrough:
+        orig_md = _escape_md(fp.original_text)
+        sale_md = _escape_md(fp.sale_text)
+        pct_md = _escape_md(fp.discount_label)
+        price_line = f"~{orig_md}~ ➜ {sale_md} \\(\\{pct_md}\\)"
+    elif fp.show_sale_badge:
+        price_line = f"{_escape_md(fp.sale_text)} ✦ {_escape_md(fp.discount_label)}"
     else:
-        price_line = f"{sym}{sale}"
+        price_line = _escape_md(fp.sale_text)
 
-    unique_colors = list(dict.fromkeys(cn for cn in deal.color_names if cn))
+    colors = unique_colors(deal)
     color_line = (
-        f"Color: {_escape_md(' · '.join(unique_colors))}"
-        if unique_colors else ""
+        f"Color: {_escape_md(' · '.join(colors))}"
+        if colors else ""
     )
 
     size_links = " \\| ".join(
@@ -85,6 +91,7 @@ class TelegramNotifier:
             return
 
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from telegram.error import TelegramError
         bot = Bot(token=self._config.bot_token)
         chat_id = self._config.chat_id
 
@@ -108,13 +115,11 @@ class TelegramNotifier:
                     "Ignore", url=actions.ignore_url,
                 )])
                 markup = InlineKeyboardMarkup(rows)
-            photo_url = deal.image_url
-            if deal.color_images and deal.product_urls:
-                from urllib.parse import parse_qs, urlparse
-                params = parse_qs(urlparse(deal.product_urls[0]).query)
-                cc = params.get("colorDisplayCode", [""])[0]
-                if cc and cc in deal.color_images:
-                    photo_url = deal.color_images[cc]
+            photo_url = resolve_color_image(
+                deal.product_urls[0] if deal.product_urls else "",
+                deal.color_images,
+                deal.image_url,
+            )
 
             try:
                 if photo_url:
@@ -132,5 +137,5 @@ class TelegramNotifier:
                         parse_mode="MarkdownV2",
                         reply_markup=markup,
                     )
-            except Exception:
+            except TelegramError:
                 logger.exception("Failed to send Telegram message for %s", deal.product_id)
