@@ -10,6 +10,7 @@ from pathlib import Path
 
 from uniqlo_sales_alerter.models.products import SaleItem
 from uniqlo_sales_alerter.notifications.base import (
+    FAVICON_LINK,
     PROJECT_URL,
     DealActions,
     format_price,
@@ -311,6 +312,7 @@ def _build_report(
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>UNIQLO Sale Alert — {len(deals)} deal(s)</title>
+{FAVICON_LINK}
 <style>
 {_REPORT_CSS}
 </style>

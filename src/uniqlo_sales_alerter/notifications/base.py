@@ -10,6 +10,16 @@ from uniqlo_sales_alerter.models.products import SaleItem
 
 PROJECT_URL = "https://github.com/kequach/uniqlo-sales-alerter"
 
+FAVICON_LINK = (
+    '<link rel="icon" href="data:image/svg+xml,'
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<path d='M4 15.5 15.5 4H28a1 1 0 0 1 1 1v12.5"
+    "L17.5 29a2 2 0 0 1-2.8 0L4 18.3a2 2 0 0 1 0-2.8z'"
+    " fill='%23ED1D24'/>"
+    "<circle cx='23' cy='9' r='2.5' fill='%23fff'/>"
+    '</svg>"/>'
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared formatting helpers (used by all notification channels)

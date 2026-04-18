@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from uniqlo_sales_alerter.notifications.base import FAVICON_LINK
+
 
 def build_settings_page(config_data: dict[str, Any]) -> str:
     """Return a self-contained HTML settings page with *config_data* pre-populated."""
@@ -19,6 +21,7 @@ _TEMPLATE = """\
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>UNIQLO Sales Alerter — Settings</title>
+""" + FAVICON_LINK + """
 <style>
   :root {
     --uq-red: #ED1D24;
