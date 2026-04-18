@@ -35,6 +35,7 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
 
 
 def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
+    """Build the HTML email body, expanding each deal into per-variant rows."""
     variants: list[SaleItem] = []
     for deal in deals:
         variants.extend(_expand_to_variants(deal))

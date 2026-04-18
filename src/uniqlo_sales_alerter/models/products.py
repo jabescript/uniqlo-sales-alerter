@@ -15,6 +15,8 @@ _DEFAULT_CURRENCY = "€"
 
 
 class UniqloPrice(BaseModel):
+    """A price with an optional currency descriptor."""
+
     value: float
     currency: dict[str, str] | None = None
 
@@ -25,12 +27,16 @@ class UniqloPrice(BaseModel):
 
 
 class UniqloPriceInfo(BaseModel):
+    """Base and optional promotional price for a product."""
+
     base: UniqloPrice
     promo: UniqloPrice | None = None
     is_dual_price: bool = Field(default=False, alias="isDualPrice")
 
 
 class UniqloSize(BaseModel):
+    """A single size option with its API display code."""
+
     name: str
     display_code: str = Field(default="", alias="displayCode")
 

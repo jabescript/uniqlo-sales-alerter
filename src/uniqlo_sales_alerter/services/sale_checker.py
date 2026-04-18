@@ -24,7 +24,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _IN_STOCK_STATUSES = frozenset({"IN_STOCK", "LOW_STOCK"})
+_STOCK_OUT = "STOCK_OUT"
 _MAX_STOCK_CONCURRENCY = 10
+_DEFAULT_PRICE_GROUP = "00"
 _DEFAULT_STATE_PATH = Path(
     os.environ.get("STATE_FILE", Path.cwd() / ".seen_variants.json"),
 )
@@ -487,7 +489,7 @@ class SaleChecker:
 
         if not verified_sizes:
             all_oos = stock_map and all(
-                v.get("statusCode") == "STOCK_OUT"
+                v.get("statusCode") == _STOCK_OUT
                 for v in stock_map.values()
                 if isinstance(v, dict)
             )

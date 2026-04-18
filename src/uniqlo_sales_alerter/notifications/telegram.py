@@ -22,6 +22,7 @@ def _escape_md(text: str) -> str:
 
 
 def _build_caption(deal: SaleItem, server_url: str = "") -> str:
+    """Build a MarkdownV2 caption for a single deal."""
     name = _escape_md(deal.name)
     sym = _escape_md(deal.currency_symbol)
     sale = _escape_md(f"{deal.sale_price:.2f}")

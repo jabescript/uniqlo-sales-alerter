@@ -154,11 +154,11 @@ async def update_config(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 def _action_page(title: str, body: str) -> HTMLResponse:
     """Return a minimal styled confirmation page (*body* is pre-escaped)."""
-    t = html.escape(title)
+    safe_title = html.escape(title)
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>{t}</title>
+<title>{safe_title}</title>
 <style>
 body{{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
 background:#f2f2f2;display:flex;align-items:center;justify-content:center;
@@ -168,7 +168,7 @@ box-shadow:0 2px 12px rgba(0,0,0,.08);max-width:460px}}
 h1{{color:#ED1D24;font-size:1.3rem;margin-bottom:12px}}
 p{{color:#555;font-size:.95rem;line-height:1.5}}
 </style></head><body><div class="card">
-<h1>{t}</h1><p>{body}</p>
+<h1>{safe_title}</h1><p>{body}</p>
 <p style="margin-top:18px;font-size:.8rem;color:#999">
 You can close this tab.</p>
 </div></body></html>"""

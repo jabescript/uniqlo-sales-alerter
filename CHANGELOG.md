@@ -27,6 +27,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 ### Code quality
 
 - Consolidated test boilerplate: parametrized SMTP error tests, extracted `EmailChannelConfig` factory, reused `sample_deal` in variant-key and stock-verification tests, hoisted shared imports, deduplicated mock helpers.
+- Codebase clean code pass: extracted `_STOCK_OUT` / `_DEFAULT_PRICE_GROUP` constants, added docstrings to Pydantic models and formatter functions, renamed unclear variables (`t` to `safe_title`), unified duplicate `print` + `logger` rate-limit messages in `UniqloClient`.
 
 ---
 

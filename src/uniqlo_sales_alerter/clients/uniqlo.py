@@ -167,11 +167,7 @@ class UniqloClient:
                         f"retrying in {wait:.0f}s"
                     )
                     print(msg)
-                    logger.warning(
-                        "Rate-limited (429) on %s — "
-                        "attempt %d/%d, retrying in %.1fs",
-                        label or url, attempt, MAX_RETRIES, wait,
-                    )
+                    logger.warning("%s", msg.strip())
                 else:
                     wait = _backoff_seconds(attempt)
                     logger.warning(
