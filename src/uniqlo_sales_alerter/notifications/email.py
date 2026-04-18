@@ -34,6 +34,12 @@ def _image_for_variant_url(
 def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     """Expand a multi-size deal into one ``SaleItem`` per size+colour variant."""
     if not deal.product_urls or len(deal.available_sizes) <= 1:
+        if deal.product_urls and deal.color_images:
+            img = _image_for_variant_url(
+                deal.product_urls[0], deal.color_images, deal.image_url,
+            )
+            if img != deal.image_url:
+                return [deal.model_copy(update={"image_url": img})]
         return [deal]
     color_names = deal.color_names or []
     variants: list[SaleItem] = []
