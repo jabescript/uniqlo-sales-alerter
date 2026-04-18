@@ -388,9 +388,11 @@ class TestStockVerification:
         assert result[0].color_names == ["RED"]
 
     @pytest.mark.asyncio
-    async def test_verify_stock_drops_product_when_all_oos(
+    async def test_verify_stock_keeps_item_when_all_oos(
         self, sale_config: AppConfig
     ):
+        """When stock reports 100% OOS the data is treated as unreliable
+        (e.g. v3-sourced PH/TH products) and the item is kept."""
         checker = SaleChecker(sale_config)
         item = sample_deal(
             product_id="E001", discount_percentage=60,
@@ -398,6 +400,40 @@ class TestStockVerification:
         )
         l2s = [_make_l2("M", "004", "RED", "15", "A1")]
         stock = {"A1": {"statusCode": "STOCK_OUT", "quantity": 0}}
+        with (
+            patch.object(
+                checker._client, "fetch_product_l2s",
+                new_callable=AsyncMock, return_value=l2s,
+            ),
+            patch.object(
+                checker._client, "fetch_variant_stock",
+                new_callable=AsyncMock, return_value=stock,
+            ),
+        ):
+            result = await checker._verify_stock([item])
+
+        assert len(result) == 1
+        assert result[0].available_sizes == ["M"]
+
+    @pytest.mark.asyncio
+    async def test_verify_stock_drops_partial_oos(
+        self, sale_config: AppConfig
+    ):
+        """When stock has a mix of statuses and no wanted sizes are in stock,
+        the item is dropped (the stock data is considered reliable)."""
+        checker = SaleChecker(sale_config)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=["url_m"], price_group="00",
+        )
+        l2s = [
+            _make_l2("M", "004", "RED", "15", "A1"),
+            _make_l2("S", "003", "BLUE", "64", "A2"),
+        ]
+        stock = {
+            "A1": {"statusCode": "STOCK_OUT", "quantity": 0},
+            "A2": {"statusCode": "IN_STOCK", "quantity": 5},
+        }
         with (
             patch.object(
                 checker._client, "fetch_product_l2s",
@@ -920,13 +956,20 @@ class TestUnknownDiscountFiltering:
         pids = {r.product_id for r in result}
         assert pids == {"E001", "E003"}
 
-    def test_no_promo_has_known_discount_true(self, checker: SaleChecker):
-        """Items with promo=None have known pricing (just no discount)."""
+    def test_no_promo_watched_only_has_known_discount_true(self, checker: SaleChecker):
+        """Watched-only items with promo=None have known pricing (no discount)."""
         products = [_product(_raw("E001", base=50, promo=None))]
-        result = checker._apply_filters(products)
+        result = checker._apply_filters(products, sale_product_ids=set())
         assert len(result) == 1
         assert result[0].has_known_discount is True
         assert result[0].discount_percentage == 0
+
+    def test_no_promo_sale_feed_has_known_discount_false(self, checker: SaleChecker):
+        """Sale-feed items with promo=None show 'Sale' (unknown discount)."""
+        products = [_product(_raw("E001", base=50, promo=None))]
+        result = checker._apply_filters(products, sale_product_ids={"E001"})
+        assert len(result) == 1
+        assert result[0].has_known_discount is False
 
 
 class TestVariantKeys:

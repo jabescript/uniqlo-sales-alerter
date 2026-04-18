@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -294,6 +295,69 @@ class QuietHoursConfig(BaseModel):
         return self
 
 
+# ---------------------------------------------------------------------------
+# Country capabilities registry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CountryCapabilities:
+    """Describes which API endpoints a country uses.
+
+    ``listing_sources`` — which sale-product listing endpoints return data.
+    ``stock_api``       — ``"v5"`` (reliable v5 stock), or ``"none"``
+                          (v5 stock returns all-OOS; keep listing data).
+    ``is_limited``      — ``True`` when the API does not expose original
+                          prices (discount % unavailable).
+    """
+    listing_sources: tuple[str, ...] = ("v5_disc",)
+    stock_api: str = "v5"
+    is_limited: bool = False
+
+
+_COUNTRY_CAPABILITIES: dict[str, CountryCapabilities] = {
+    # Europe — v5 discount only, full pricing
+    "de": CountryCapabilities(),
+    "uk": CountryCapabilities(),
+    "fr": CountryCapabilities(),
+    "es": CountryCapabilities(),
+    "it": CountryCapabilities(),
+    "be": CountryCapabilities(),
+    "nl": CountryCapabilities(),
+    "dk": CountryCapabilities(),
+    "se": CountryCapabilities(),
+    # Asia-Pacific — v5, full pricing
+    "au": CountryCapabilities(),
+    "in": CountryCapabilities(),
+    "id": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
+    "vn": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
+    "my": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
+    # SEA v3 stores — stock API unreliable
+    "ph": CountryCapabilities(
+        listing_sources=("v3_disc",), stock_api="none",
+    ),
+    "th": CountryCapabilities(
+        listing_sources=("v5_ltd", "v3_disc", "v3_ltd"), stock_api="none",
+    ),
+    # Limited-support countries — no discount %
+    "us": CountryCapabilities(
+        listing_sources=("v5_disc", "v5_ltd"), is_limited=True,
+    ),
+    "ca": CountryCapabilities(
+        listing_sources=("v5_disc", "v5_ltd"), is_limited=True,
+    ),
+    "jp": CountryCapabilities(
+        listing_sources=("v5_disc", "v5_ltd"), is_limited=True,
+    ),
+    "kr": CountryCapabilities(is_limited=True),
+    "sg": CountryCapabilities(
+        listing_sources=("v5_disc", "sale_paths"), is_limited=True,
+    ),
+}
+
+_DEFAULT_CAPABILITIES = CountryCapabilities()
+
+
 class AppConfig(BaseModel):
     uniqlo: UniqloConfig = Field(default_factory=UniqloConfig)
     filters: FilterConfig = Field(default_factory=FilterConfig)
@@ -336,6 +400,13 @@ class AppConfig(BaseModel):
     @property
     def product_page_base(self) -> str:
         return f"https://www.uniqlo.com/{self.uniqlo.country}/products"
+
+    @property
+    def capabilities(self) -> CountryCapabilities:
+        """API capabilities for the configured country."""
+        return _COUNTRY_CAPABILITIES.get(
+            self.country_code, _DEFAULT_CAPABILITIES,
+        )
 
     @property
     def full_server_url(self) -> str:

@@ -109,6 +109,11 @@ def _build_report(
         </div>""")
 
     timestamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
+    settings_link = (
+        f' &middot; <a href="{server_url}/settings"'
+        f' style="text-decoration:none;color:inherit;">Settings</a>'
+        if server_url else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -306,9 +311,7 @@ def _build_report(
 </div>
 <footer>Powered by <a href="{PROJECT_URL}"
   style="text-decoration:none;color:inherit;"><span>UNIQLO</span> Sales Alerter</a>{
-  f' &middot; <a href="{server_url}/settings" style="text-decoration:none;color:inherit;">Settings</a>'
-  if server_url else ""
-}</footer>
+  settings_link}</footer>
 </body>
 </html>"""
 

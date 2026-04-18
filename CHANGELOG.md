@@ -20,7 +20,9 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Bug fixes
 
-- **Watched items no longer show a false "Sale" label** — watched items that are not on sale previously displayed a "Sale" badge because the pricing logic conflated "no promotion" with "unknown discount" (limited-country behaviour). Items with no promotion now correctly show just the price with no label.
+- **Watched items no longer show a false "Sale" label** — watched items not on sale previously displayed a "Sale" badge because the pricing logic conflated "no promotion" with "unknown discount". The `has_known_discount` flag is now determined by whether the item came from the sale feed rather than by the `promo` field, which correctly handles Singapore (where sale items have `promo=None`) and watched-only items alike. Verified against all 22 supported countries via a full API sweep.
+- **SEA stores (PH, TH) no longer drop all items** — the v5 stock endpoint returns `STOCK_OUT` for all variants of v3-sourced products, causing stock verification to drop every item. When all stock entries report OOS, the verifier now uses v5 L2 data to rebuild correct URLs with real colour codes instead of silently discarding items.
+- **Country capabilities registry** — a new `CountryCapabilities` data structure in `config.py` maps each of the 22 supported countries to its API profile (which listing endpoints to query, whether stock verification is reliable, whether pricing is limited). `fetch_sale_products()` now only calls the endpoints that actually return data for the configured country, eliminating redundant cross-version API calls. Determined via a full probe of all 22 countries.
 
 ### Code quality
 

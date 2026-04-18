@@ -162,7 +162,8 @@ class SaleChecker:
                 )
                 all_products.extend(watched_extra)
 
-        matching = self._apply_filters(all_products)
+        sale_pids = {p.product_id.upper() for p in sale_products}
+        matching = self._apply_filters(all_products, sale_pids)
 
         # Verify real-time stock and pick in-stock colors for each size.
         matching = await self._verify_stock(matching)
@@ -220,7 +221,11 @@ class SaleChecker:
     # Filtering
     # ------------------------------------------------------------------
 
-    def _apply_filters(self, products: list[UniqloProduct]) -> list[SaleItem]:
+    def _apply_filters(
+        self,
+        products: list[UniqloProduct],
+        sale_product_ids: set[str] | None = None,
+    ) -> list[SaleItem]:
         """Apply gender, size, discount, and ignore filters.
 
         Watched variants are always included.  Ignored products are skipped
@@ -234,6 +239,11 @@ class SaleChecker:
         watched = self._watched_ids
         gender_filter = {g.upper() for g in cfg.gender}
         all_size_names = self._normalised_size_set()
+        _sale_pids = (
+            sale_product_ids
+            if sale_product_ids is not None
+            else {p.product_id.upper() for p in products}
+        )
         results: list[SaleItem] = []
 
         for product in products:
@@ -254,9 +264,11 @@ class SaleChecker:
                 watched_variants = self._watched_by_product.get(
                     product.product_id.upper(), [],
                 )
+                in_sale_feed = product.product_id.upper() in _sale_pids
                 results.append(
                     self._to_sale_item(
-                        product, is_watched, all_size_names, watched_variants,
+                        product, is_watched, all_size_names,
+                        watched_variants, in_sale_feed=in_sale_feed,
                     )
                 )
 
@@ -269,6 +281,8 @@ class SaleChecker:
         is_watched: bool,
         size_filter: set[str],
         watched_variants: list[WatchedVariant] | None = None,
+        *,
+        in_sale_feed: bool = True,
     ) -> SaleItem:
         rating = product.rating
         matched_sizes = self._matching_sizes(product, size_filter)
@@ -318,7 +332,7 @@ class SaleChecker:
             rating_average=rating.get("average"),
             rating_count=rating.get("count"),
             is_watched=is_watched,
-            has_known_discount=product.is_on_sale or product.prices.promo is None,
+            has_known_discount=product.is_on_sale or not in_sale_feed,
         )
 
     def _normalised_size_set(self) -> set[str]:
@@ -472,12 +486,69 @@ class SaleChecker:
                 verified_urls.append(url)
 
         if not verified_sizes:
+            all_oos = stock_map and all(
+                v.get("statusCode") == "STOCK_OUT"
+                for v in stock_map.values()
+                if isinstance(v, dict)
+            )
+            if all_oos and l2s:
+                logger.debug(
+                    "Stock API reports 100%% OOS for %s — using L2 data "
+                    "for URLs without stock filtering", item.product_id,
+                )
+                return self._rebuild_from_l2(item, l2s, base)
+            if all_oos:
+                return item
             return None
 
         return item.model_copy(update={
             "available_sizes": verified_sizes,
             "product_urls": verified_urls,
             "color_names": verified_color_names,
+        })
+
+    @staticmethod
+    def _rebuild_from_l2(
+        item: SaleItem, l2s: list[dict], base: str,
+    ) -> SaleItem:
+        """Rebuild URLs and color names from L2 data without stock filtering.
+
+        Used when the stock API is unreliable (100% OOS) but L2 variant
+        data is available.  Picks the first colour variant per wanted size.
+        """
+        l2_by_size: dict[str, dict] = {}
+        for l2 in l2s:
+            sz_name = l2.get("size", {}).get("name", "").upper()
+            if sz_name and sz_name not in l2_by_size:
+                l2_by_size[sz_name] = l2
+
+        rebuilt_sizes: list[str] = []
+        rebuilt_urls: list[str] = []
+        rebuilt_colors: list[str] = []
+        for size_name in item.available_sizes:
+            l2 = l2_by_size.get(size_name.upper())
+            if l2:
+                color_obj = l2.get("color", {})
+                color_dc = color_obj.get("displayCode", "")
+                color_name = color_obj.get("name", "")
+                size_dc = l2.get("size", {}).get("displayCode", "")
+                url = (
+                    f"{base}/{item.product_id}/{item.price_group}"
+                    f"?colorDisplayCode={color_dc}"
+                    f"&sizeDisplayCode={size_dc}"
+                )
+                rebuilt_sizes.append(size_name)
+                rebuilt_urls.append(url)
+                rebuilt_colors.append(color_name)
+            else:
+                rebuilt_sizes.append(size_name)
+                rebuilt_urls.append("")
+                rebuilt_colors.append("")
+
+        return item.model_copy(update={
+            "available_sizes": rebuilt_sizes,
+            "product_urls": rebuilt_urls,
+            "color_names": rebuilt_colors,
         })
 
     @staticmethod

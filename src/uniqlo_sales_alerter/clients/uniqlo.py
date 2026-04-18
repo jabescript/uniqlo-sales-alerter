@@ -222,51 +222,58 @@ class UniqloClient:
     async def fetch_sale_products(self) -> list[UniqloProduct]:
         """Fetch products flagged as on sale.
 
-        Queries four flag-based sources in parallel and merges/deduplicates
-        by product ID:
-
-        * v5 ``flagCodes=discount``    — European and most Asia-Pacific stores
-        * v5 ``flagCodes=limitedOffer`` — Philippines, Malaysia, Australia …
-        * v3 ``flagCodes=discount``    — Thailand, Philippines (v3-only stores)
-        * v3 ``flagCodes=limitedOffer`` — Thailand …
-
-        When ``sale_paths`` is configured (e.g. for Singapore where the sale
-        catalogue is organised into category paths rather than flag codes),
-        products from those paths are fetched in addition and merged in.
+        Only queries the listing endpoints that actually return data for
+        the configured country, as determined by :pyattr:`CountryCapabilities.listing_sources`.
+        Results from all sources are merged and deduplicated by product ID.
         """
-        tasks = [
-            self._fetch_all(extra_params={"flagCodes": "discount"}),
-            self._fetch_all(extra_params={"flagCodes": "limitedOffer"}),
-            self._fetch_all_v3(extra_params={"flagCodes": "discount"}),
-            self._fetch_all_v3(extra_params={"flagCodes": "limitedOffer"}),
-        ]
-        for path_id in self._config.uniqlo.sale_paths:
-            tasks.append(self._fetch_all(extra_params={"path": path_id}))
+        caps = self._config.capabilities
+        sources = caps.listing_sources
+
+        _SOURCE_FETCHERS = {
+            "v5_disc": lambda: self._fetch_all(
+                extra_params={"flagCodes": "discount"},
+            ),
+            "v5_ltd": lambda: self._fetch_all(
+                extra_params={"flagCodes": "limitedOffer"},
+            ),
+            "v3_disc": lambda: self._fetch_all_v3(
+                extra_params={"flagCodes": "discount"},
+            ),
+            "v3_ltd": lambda: self._fetch_all_v3(
+                extra_params={"flagCodes": "limitedOffer"},
+            ),
+        }
+
+        tasks: list[asyncio.Task] = []
+        labels: list[str] = []
+        for src in sources:
+            if src == "sale_paths":
+                for path_id in self._config.uniqlo.sale_paths:
+                    tasks.append(self._fetch_all(
+                        extra_params={"path": path_id},
+                    ))
+                    labels.append(f"path:{path_id}")
+            elif src in _SOURCE_FETCHERS:
+                tasks.append(_SOURCE_FETCHERS[src]())
+                labels.append(src)
 
         results = await asyncio.gather(*tasks)
-        v5_disc, v5_ltd, v3_disc, v3_ltd = results[:4]
-        path_results = results[4:]
 
         seen: set[str] = set()
         merged: list[UniqloProduct] = []
-        for product in [*v5_disc, *v5_ltd, *v3_disc, *v3_ltd]:
-            if product.product_id not in seen:
-                seen.add(product.product_id)
-                merged.append(product)
-
-        path_count = 0
-        for batch in path_results:
+        counts: dict[str, int] = {}
+        for label, batch in zip(labels, results):
+            count = 0
             for product in batch:
                 if product.product_id not in seen:
                     seen.add(product.product_id)
                     merged.append(product)
-                    path_count += 1
+                    count += 1
+            counts[label] = count
 
+        parts = " + ".join(f"{v} {k}" for k, v in counts.items())
         logger.info(
-            "Fetched v5(%d disc + %d ltd) + v3(%d disc + %d ltd) "
-            "+ %d from sale_paths = %d unique sale candidates",
-            len(v5_disc), len(v5_ltd), len(v3_disc), len(v3_ltd),
-            path_count, len(merged),
+            "Fetched %s = %d unique sale candidates", parts, len(merged),
         )
         return merged
 

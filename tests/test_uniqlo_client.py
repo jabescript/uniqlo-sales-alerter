@@ -63,22 +63,23 @@ class TestFetchSaleProducts:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_merges_discount_and_limited_offer(
-        self, client: UniqloClient, config: AppConfig,
-    ):
+    async def test_merges_discount_and_limited_offer(self):
+        """Country with both v5_disc and v5_ltd merges results."""
+        cfg = AppConfig.model_validate({"uniqlo": {"country": "id/en"}})
+        c = UniqloClient(cfg)
         discount_products = [make_raw_product(product_id="E001", promo_price=10.0)]
         limited_products = [make_raw_product(product_id="E002", promo_price=15.0)]
         discount_resp = make_api_response(discount_products, total=1)
         limited_resp = make_api_response(limited_products, total=1)
-        respx.get(config.base_url).side_effect = [
+        respx.get(cfg.base_url).side_effect = [
             httpx.Response(200, json=discount_resp),
             httpx.Response(200, json=limited_resp),
         ]
-        _mock_v3_empty(config)
 
-        result = await client.fetch_sale_products()
+        result = await c.fetch_sale_products()
         pids = {p.product_id for p in result}
         assert pids == {"E001", "E002"}
+        await c.aclose()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -99,47 +100,45 @@ class TestFetchSaleProducts:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_sale_products_sends_both_flagcodes(
-        self, client: UniqloClient, config: AppConfig
-    ):
+    async def test_sale_products_sends_both_flagcodes(self):
+        """Country with v5_disc+v5_ltd queries both flagCodes."""
+        cfg = AppConfig.model_validate({"uniqlo": {"country": "id/en"}})
+        c = UniqloClient(cfg)
         response = make_api_response([], total=0)
-        v5_route = respx.get(config.base_url).mock(
+        v5_route = respx.get(cfg.base_url).mock(
             return_value=httpx.Response(200, json=response)
         )
-        v3_route = _mock_v3_empty(config)
 
-        await client.fetch_sale_products()
+        await c.fetch_sale_products()
 
         v5_urls = [str(call.request.url) for call in v5_route.calls]
-        v3_urls = [str(call.request.url) for call in v3_route.calls]
-        all_urls = v5_urls + v3_urls
-        assert any("flagCodes=discount" in u for u in all_urls)
-        assert any("flagCodes=limitedOffer" in u for u in all_urls)
+        assert any("flagCodes=discount" in u for u in v5_urls)
+        assert any("flagCodes=limitedOffer" in u for u in v5_urls)
+        await c.aclose()
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_v3_products_merged_with_v5(
-        self, client: UniqloClient, config: AppConfig,
-    ):
-        """Products from the v3 API are merged with v5 results."""
+    async def test_v3_products_merged_with_v5(self):
+        """Country with v5_ltd+v3_disc+v3_ltd merges all sources (e.g. Thailand)."""
+        cfg = AppConfig.model_validate({"uniqlo": {"country": "th/en"}})
+        c = UniqloClient(cfg)
         v5_product = make_raw_product(product_id="E001", promo_price=10.0)
         v5_resp = make_api_response([v5_product], total=1)
-        empty = make_api_response([], total=0)
-        respx.get(config.base_url).side_effect = [
-            httpx.Response(200, json=v5_resp),
-            httpx.Response(200, json=empty),
-        ]
+        respx.get(cfg.base_url).mock(
+            return_value=httpx.Response(200, json=v5_resp),
+        )
         v3_product = make_raw_product(product_id="E002", promo_price=15.0)
         v3_resp = make_api_response([v3_product], total=1)
         v3_empty = make_api_response([], total=0)
-        respx.get(config.base_url_v3).side_effect = [
+        respx.get(cfg.base_url_v3).side_effect = [
             httpx.Response(200, json=v3_resp),
             httpx.Response(200, json=v3_empty),
         ]
 
-        result = await client.fetch_sale_products()
+        result = await c.fetch_sale_products()
         pids = {p.product_id for p in result}
         assert pids == {"E001", "E002"}
+        await c.aclose()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -179,14 +178,11 @@ class TestSalePathsFetching:
         flag_resp = make_api_response([flag_product], total=1)
         path_product = make_raw_product(product_id="E002")
         path_resp = make_api_response([path_product], total=1)
-        empty = make_api_response([], total=0)
 
         respx.get(cfg.base_url).side_effect = [
-            httpx.Response(200, json=flag_resp),   # flagCodes=discount
-            httpx.Response(200, json=empty),        # flagCodes=limitedOffer
+            httpx.Response(200, json=flag_resp),   # v5_disc
             httpx.Response(200, json=path_resp),   # path=5856
         ]
-        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         pids = {p.product_id for p in result}
@@ -204,14 +200,11 @@ class TestSalePathsFetching:
 
         product = make_raw_product(product_id="E001", promo_price=10.0)
         resp = make_api_response([product], total=1)
-        empty = make_api_response([], total=0)
 
         respx.get(cfg.base_url).side_effect = [
-            httpx.Response(200, json=resp),   # flagCodes=discount
-            httpx.Response(200, json=empty),  # flagCodes=limitedOffer
+            httpx.Response(200, json=resp),   # v5_disc
             httpx.Response(200, json=resp),   # path=5856
         ]
-        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         assert len(result) == 1
@@ -248,12 +241,10 @@ class TestSalePathsFetching:
         empty = make_api_response([], total=0)
 
         respx.get(cfg.base_url).side_effect = [
-            httpx.Response(200, json=empty),                    # flagCodes=discount
-            httpx.Response(200, json=empty),                    # flagCodes=limitedOffer
+            httpx.Response(200, json=empty),                    # v5_disc
             httpx.Response(200, json=make_api_response([p1])),  # path=5856
             httpx.Response(200, json=make_api_response([p2])),  # path=5857
         ]
-        _mock_v3_empty(cfg)
 
         result = await client.fetch_sale_products()
         pids = {p.product_id for p in result}
@@ -514,17 +505,12 @@ class TestRateLimitHandling:
         """Pagination should also retry on 429."""
         products = [make_raw_product(product_id="E000001-000", promo_price=10.0)]
         ok_resp = make_api_response(products, total=1)
-        empty = make_api_response([], total=0)
 
         route = respx.get(config.base_url)
         route.side_effect = [
             httpx.Response(429, headers={"retry-after": "0"}),
-            httpx.Response(200, json=empty),
             httpx.Response(200, json=ok_resp),
         ]
-        respx.get(config.base_url_v3).mock(
-            return_value=httpx.Response(200, json=empty),
-        )
 
         with patch("uniqlo_sales_alerter.clients.uniqlo.asyncio.sleep"):
             result = await client.fetch_sale_products()
