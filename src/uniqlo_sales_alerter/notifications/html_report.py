@@ -24,14 +24,22 @@ def _build_report(
             if deal.is_watched else ""
         )
         first_url = deal.product_urls[0] if deal.product_urls else ""
+        best_image = deal.image_url
+        if deal.color_images and first_url:
+            from urllib.parse import parse_qs, urlparse
+            cc = parse_qs(urlparse(first_url).query).get(
+                "colorDisplayCode", [""],
+            )[0]
+            if cc and cc in deal.color_images:
+                best_image = deal.color_images[cc]
         img_inner = (
-            f'<img src="{deal.image_url}" alt="{deal.name}" loading="lazy"/>'
-            if deal.image_url
+            f'<img src="{best_image}" alt="{deal.name}" loading="lazy"/>'
+            if best_image
             else '<div class="no-img">No image</div>'
         )
         img = (
             f'<a href="{first_url}" target="_blank">{img_inner}</a>'
-            if deal.image_url and first_url else img_inner
+            if best_image and first_url else img_inner
         )
         actions = DealActions(deal, server_url)
         if actions.unwatch_url:

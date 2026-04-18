@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 _SMTP_TIMEOUT = 30
 
 
+def _image_for_variant_url(
+    url: str, color_images: dict[str, str], fallback: str | None,
+) -> str | None:
+    """Pick the product image matching the variant URL's colour code."""
+    if color_images and url:
+        from urllib.parse import parse_qs, urlparse
+        params = parse_qs(urlparse(url).query)
+        color_code = params.get("colorDisplayCode", [""])[0]
+        if color_code and color_code in color_images:
+            return color_images[color_code]
+    return fallback
+
+
 def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     """Expand a multi-size deal into one ``SaleItem`` per size+colour variant."""
     if not deal.product_urls or len(deal.available_sizes) <= 1:
@@ -26,10 +39,12 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     variants: list[SaleItem] = []
     for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls)):
         cn = color_names[i] if i < len(color_names) else ""
+        img = _image_for_variant_url(url, deal.color_images, deal.image_url)
         variants.append(deal.model_copy(update={
             "available_sizes": [sz],
             "product_urls": [url],
             "color_names": [cn],
+            "image_url": img,
         }))
     return variants
 

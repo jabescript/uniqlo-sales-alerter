@@ -108,11 +108,19 @@ class TelegramNotifier:
                     "Ignore", url=actions.ignore_url,
                 )])
                 markup = InlineKeyboardMarkup(rows)
+            photo_url = deal.image_url
+            if deal.color_images and deal.product_urls:
+                from urllib.parse import parse_qs, urlparse
+                params = parse_qs(urlparse(deal.product_urls[0]).query)
+                cc = params.get("colorDisplayCode", [""])[0]
+                if cc and cc in deal.color_images:
+                    photo_url = deal.color_images[cc]
+
             try:
-                if deal.image_url:
+                if photo_url:
                     await bot.send_photo(
                         chat_id=chat_id,
-                        photo=deal.image_url,
+                        photo=photo_url,
                         caption=caption,
                         parse_mode="MarkdownV2",
                         reply_markup=markup,

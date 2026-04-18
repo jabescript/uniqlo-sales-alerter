@@ -82,6 +82,23 @@ class UniqloProduct(BaseModel, populate_by_name=True):
                 return detail["image"]
         return None
 
+    def image_url_for_color(self, color_code: str) -> str | None:
+        """Return the image URL for a specific colour code, or the default."""
+        main_images: dict[str, Any] = self.images.get("main", {})
+        detail = main_images.get(color_code)
+        if isinstance(detail, dict) and "image" in detail:
+            return detail["image"]
+        return self.main_image_url
+
+    @property
+    def color_image_map(self) -> dict[str, str]:
+        """Map of colour display code to image URL."""
+        result: dict[str, str] = {}
+        for color_code, detail in self.images.get("main", {}).items():
+            if isinstance(detail, dict) and "image" in detail:
+                result[color_code] = detail["image"]
+        return result
+
     @property
     def size_names(self) -> list[str]:
         return [s.name for s in self.sizes]
@@ -126,6 +143,7 @@ class SaleItem(BaseModel):
     gender: str
     available_sizes: list[str]
     image_url: str | None = None
+    color_images: dict[str, str] = Field(default_factory=dict)
     product_urls: list[str] = Field(default_factory=list)
     color_names: list[str] = Field(default_factory=list)
     price_group: str = ""

@@ -328,6 +328,7 @@ class SaleChecker:
             gender=product.gender_category,
             available_sizes=final_sizes,
             image_url=product.main_image_url,
+            color_images=product.color_image_map,
             product_urls=final_urls,
             color_names=final_color_names,
             price_group=product.price_group,
