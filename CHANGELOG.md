@@ -19,6 +19,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Bug fixes
 
+- **Wrong product image for colour variants** — when stock verification picked a colour not present in the listing API's image map, notifications fell back to the representative colour's image (e.g. showing a black jacket instead of the off-white one linked in the product URL). `resolve_color_image` now derives the correct image URL from the Uniqlo CDN naming pattern when the exact colour code is missing from the map. Removed unused `image_url_for_color` from `UniqloProduct` (superseded by `resolve_color_image`).
 - **YAML comments preserved on save** — `save_config` was stripping comments that appear between block sequences and the next mapping key (e.g. "# Ignored products…", "# Server URL…"). ruamel.yaml stores these on the last sequence item's internal comment attributes; the merge logic now transplants them to the replacement sequence.
 - **`watched_urls` no longer reappears in config.yaml** — the legacy migration field was included in `model_dump()` output, causing `save_config` to write `watched_urls: []` back on every save. Fixed with `exclude=True` on the Pydantic field.
 

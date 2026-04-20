@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from uniqlo_sales_alerter.config import AppConfig, EmailChannelConfig, TelegramChannelConfig
-from uniqlo_sales_alerter.notifications.base import Notifier
+from uniqlo_sales_alerter.notifications.base import (
+    Notifier,
+    _derive_color_image,
+    resolve_color_image,
+)
 from uniqlo_sales_alerter.notifications.console import ConsoleNotifier, _format_deal
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
 from uniqlo_sales_alerter.notifications.email import EmailNotifier, _build_html, _expand_to_variants
@@ -464,6 +468,77 @@ class TestHtmlReportNotifier:
 
         output = capsys.readouterr().out
         assert "No deals" in output
+
+
+class TestResolveColorImage:
+    """Verify colour-aware image resolution, including CDN URL derivation."""
+
+    _CDN_09 = "https://image.uniqlo.com/UQ/ST3/eu/imagesgoods/485476/item/eugoods_09_485476_3x4.jpg"
+    _CDN_01 = "https://image.uniqlo.com/UQ/ST3/eu/imagesgoods/485476/item/eugoods_01_485476_3x4.jpg"
+
+    def test_exact_match_in_map(self):
+        url = "https://www.uniqlo.com/de/de/products/E485476-000/00?colorDisplayCode=09"
+        result = resolve_color_image(url, {"09": self._CDN_09}, None)
+        assert result == self._CDN_09
+
+    def test_derives_image_when_color_missing_from_map(self):
+        url = "https://www.uniqlo.com/de/de/products/E485476-000/00?colorDisplayCode=01"
+        result = resolve_color_image(url, {"09": self._CDN_09}, None)
+        assert result == self._CDN_01
+
+    def test_falls_back_when_url_has_no_color_param(self):
+        url = "https://www.uniqlo.com/de/de/products/E485476-000/00"
+        fallback = self._CDN_09
+        assert resolve_color_image(url, {"09": self._CDN_09}, fallback) == fallback
+
+    def test_falls_back_when_color_images_empty(self):
+        url = "https://www.uniqlo.com/de/de/products/E485476-000/00?colorDisplayCode=01"
+        fallback = self._CDN_09
+        assert resolve_color_image(url, {}, fallback) == fallback
+
+    def test_falls_back_when_cdn_pattern_unrecognised(self):
+        url = "https://www.uniqlo.com/de/de/products/E485476-000/00?colorDisplayCode=01"
+        non_cdn = "https://example.com/image.jpg"
+        assert resolve_color_image(url, {"09": non_cdn}, "fallback.jpg") == "fallback.jpg"
+
+    def test_derive_color_image_substitutes_code(self):
+        assert _derive_color_image(self._CDN_09, "01") == self._CDN_01
+
+    def test_derive_color_image_returns_none_for_non_cdn(self):
+        assert _derive_color_image("https://example.com/image.jpg", "01") is None
+
+    def test_email_variant_uses_derived_image(self):
+        deal = _sample_deal(
+            available_sizes=["M"],
+            product_urls=[
+                "https://www.uniqlo.com/de/de/products/E485476-000/00"
+                "?colorDisplayCode=01&sizeDisplayCode=003",
+            ],
+            color_names=["OFF WHITE"],
+            color_images={"09": self._CDN_09},
+            image_url=self._CDN_09,
+        )
+        variants = _expand_to_variants(deal)
+        assert len(variants) == 1
+        assert variants[0].image_url == self._CDN_01
+
+    def test_email_multi_variant_derives_per_color(self):
+        deal = _sample_deal(
+            available_sizes=["M", "L"],
+            product_urls=[
+                "https://www.uniqlo.com/de/de/products/E485476-000/00"
+                "?colorDisplayCode=01&sizeDisplayCode=003",
+                "https://www.uniqlo.com/de/de/products/E485476-000/00"
+                "?colorDisplayCode=69&sizeDisplayCode=004",
+            ],
+            color_names=["OFF WHITE", "NAVY"],
+            color_images={"09": self._CDN_09},
+            image_url=self._CDN_09,
+        )
+        variants = _expand_to_variants(deal)
+        assert len(variants) == 2
+        assert "_01_" in variants[0].image_url
+        assert "_69_" in variants[1].image_url
 
 
 class TestUnknownDiscountDisplay:

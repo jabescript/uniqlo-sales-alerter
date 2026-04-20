@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, quote, urlparse
@@ -70,17 +71,64 @@ def format_price(deal: SaleItem) -> FormattedPrice:
     )
 
 
+# ---------------------------------------------------------------------------
+# Colour-aware image resolution
+#
+# The listing API often returns images only for the representative colour,
+# but stock verification may assign a different in-stock colour to a variant.
+# These helpers ensure each notification channel displays the photo matching
+# the variant's actual colour, using two strategies:
+#
+#   1. Exact lookup — ``color_images`` maps colour display codes to URLs
+#      (populated from the listing API's ``images.main``).
+#   2. CDN derivation — when the exact code isn't in the map, the colour
+#      portion of a known CDN URL is substituted
+#      (``…/eugoods_09_… → …/eugoods_01_…``).
+# ---------------------------------------------------------------------------
+
+_COLOR_IN_CDN_URL = re.compile(r"(goods_)\d{2}(_)")
+
+
+def _derive_color_image(existing_url: str, target_color: str) -> str | None:
+    """Derive an image URL for *target_color* from an existing Uniqlo CDN URL.
+
+    The CDN encodes the colour display code in the filename, e.g.
+    ``…/eugoods_09_485476_3x4.jpg``.  This substitutes the colour portion
+    so the notification shows the correct variant photo.
+
+    Returns *None* if *existing_url* doesn't match the expected pattern.
+    """
+    result, count = _COLOR_IN_CDN_URL.subn(
+        rf"\g<1>{target_color}\2", existing_url, count=1,
+    )
+    return result if count else None
+
+
 def resolve_color_image(
     url: str,
     color_images: dict[str, str],
     fallback: str | None,
 ) -> str | None:
-    """Pick the product image matching the variant URL's colour code."""
+    """Pick the product image matching the variant URL's colour code.
+
+    Resolution order:
+
+    1. Parse ``colorDisplayCode`` from *url* and look it up in *color_images*.
+    2. If the code is absent from the map, derive the URL from an existing
+       entry via :func:`_derive_color_image` (CDN colour substitution).
+    3. Return *fallback* (typically the listing's first/representative image).
+    """
     if color_images and url:
         params = parse_qs(urlparse(url).query)
         color_code = params.get("colorDisplayCode", [""])[0]
-        if color_code and color_code in color_images:
-            return color_images[color_code]
+        if color_code:
+            if color_code in color_images:
+                return color_images[color_code]
+            any_url = next(iter(color_images.values()), None)
+            if any_url:
+                derived = _derive_color_image(any_url, color_code)
+                if derived:
+                    return derived
     return fallback
 
 

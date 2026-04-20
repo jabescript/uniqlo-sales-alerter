@@ -109,14 +109,6 @@ class UniqloProduct(BaseModel, populate_by_name=True):
                 return detail["image"]
         return None
 
-    def image_url_for_color(self, color_code: str) -> str | None:
-        """Return the image URL for a specific colour code, or the default."""
-        main_images: dict[str, Any] = self.images.get("main", {})
-        detail = main_images.get(color_code)
-        if isinstance(detail, dict) and "image" in detail:
-            return detail["image"]
-        return self.main_image_url
-
     @property
     def color_image_map(self) -> dict[str, str]:
         """Map of colour display code to image URL."""
