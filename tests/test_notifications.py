@@ -17,7 +17,7 @@ from uniqlo_sales_alerter.notifications.console import ConsoleNotifier, _format_
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
 from uniqlo_sales_alerter.notifications.email import EmailNotifier, _build_html, _expand_to_variants
 from uniqlo_sales_alerter.notifications.html_report import HtmlReportNotifier, _build_report
-from uniqlo_sales_alerter.notifications.telegram import TelegramNotifier, _build_caption
+from uniqlo_sales_alerter.notifications.telegram import TelegramNotifier, _build_caption, _escape_md
 
 from .conftest import sample_deal as _sample_deal
 
@@ -140,6 +140,201 @@ class TestTelegramNotifier:
     ], ids=["enabled", "no_token", "flag_off"])
     def test_is_enabled(self, cfg_kwargs, expected):
         assert TelegramNotifier(TelegramChannelConfig(**cfg_kwargs)).is_enabled() is expected
+
+
+_RESERVED_MD_V2 = frozenset(r"\_*[]()~`>#+-=|{}.!")
+
+
+def _assert_no_double_escaped_reserved(text: str) -> None:
+    """Reject MarkdownV2 where a reserved char follows ``\\\\`` (escaped backslash).
+
+    The pattern ``\\X`` (two literal backslashes then reserved *X*) tells
+    Telegram "literal backslash + unescaped X" — which it rejects.  This
+    catches the class of bug where an f-string adds an extra ``\\`` before
+    an already-escaped variable.
+    """
+    for i in range(len(text) - 2):
+        if text[i] == "\\" and text[i + 1] == "\\" and text[i + 2] in _RESERVED_MD_V2:
+            ctx = text[max(0, i - 10) : i + 10]
+            raise AssertionError(
+                f"Double-escaped '{text[i + 2]}' at position {i}: …{ctx}…"
+            )
+
+
+class TestEscapeMd:
+    """Validate the MarkdownV2 escape helper."""
+
+    _CASES = [
+        ("hello", "hello"),
+        ("-50%", "\\-50%"),
+        ("(test)", "\\(test\\)"),
+        ("a.b", "a\\.b"),
+        ("a_b", "a\\_b"),
+        ("a*b~c", "a\\*b\\~c"),
+    ]
+
+    @pytest.mark.parametrize("raw,expected", _CASES, ids=[c[0] for c in _CASES])
+    def test_escapes_reserved_chars(self, raw, expected):
+        assert _escape_md(raw) == expected
+
+    def test_no_double_escape_on_clean_input(self):
+        """Escaping a string without backslashes should never produce ``\\\\``."""
+        result = _escape_md("Price: -50% (sale)")
+        assert "\\\\" not in result
+
+
+class TestTelegramCaptionMarkdownV2:
+    """Validate that _build_caption produces well-formed MarkdownV2."""
+
+    @pytest.mark.xfail(reason="Known bug — fix pending in open PR", strict=True)
+    def test_strikethrough_discount_no_double_escape(self):
+        """Known-discount captions must not double-escape the percentage."""
+        deal = _sample_deal()
+        caption = _build_caption(deal)
+        _assert_no_double_escaped_reserved(caption)
+
+    def test_unknown_discount_no_double_escape(self):
+        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
+        caption = _build_caption(deal)
+        _assert_no_double_escaped_reserved(caption)
+
+    def test_plain_price_no_double_escape(self):
+        deal = _sample_deal(has_known_discount=True, discount_percentage=0)
+        caption = _build_caption(deal)
+        _assert_no_double_escaped_reserved(caption)
+
+    def test_special_chars_in_name_escaped(self):
+        deal = _sample_deal(name="T-Shirt (100% Cotton)")
+        caption = _build_caption(deal)
+        assert "T\\-Shirt" in caption
+        assert "\\(100% Cotton\\)" in caption
+
+    def test_server_url_in_footer(self):
+        deal = _sample_deal()
+        caption = _build_caption(deal, server_url="http://192.168.1.50:8000")
+        assert "[Settings](" in caption
+        assert "192.168.1.50" in caption
+
+    def test_no_settings_link_without_server_url(self):
+        deal = _sample_deal()
+        caption = _build_caption(deal, server_url="")
+        assert "Settings" not in caption
+
+
+class TestTelegramNotifierSend:
+    """Test TelegramNotifier.send with mocked telegram.Bot."""
+
+    @staticmethod
+    def _make_config(**overrides) -> TelegramChannelConfig:
+        defaults = dict(enabled=True, bot_token="test-token", chat_id="12345")
+        defaults.update(overrides)
+        return TelegramChannelConfig(**defaults)
+
+    @staticmethod
+    def _mock_bot(monkeypatch) -> MagicMock:
+        """Patch telegram.Bot and return the mock instance."""
+        import telegram
+
+        mock_instance = MagicMock()
+        mock_instance.send_photo = AsyncMock()
+        mock_instance.send_message = AsyncMock()
+        monkeypatch.setattr(telegram, "Bot", MagicMock(return_value=mock_instance))
+        return mock_instance
+
+    @pytest.mark.asyncio
+    async def test_send_photo_for_deal_with_image(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(self._make_config())
+
+        await notifier.send([_sample_deal()])
+
+        bot.send_photo.assert_awaited_once()
+        kwargs = bot.send_photo.call_args.kwargs
+        assert kwargs["chat_id"] == "12345"
+        assert kwargs["parse_mode"] == "MarkdownV2"
+        assert kwargs["photo"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_when_no_image(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(self._make_config())
+
+        await notifier.send([_sample_deal(image_url=None)])
+
+        bot.send_message.assert_awaited_once()
+        bot.send_photo.assert_not_awaited()
+        assert bot.send_message.call_args.kwargs["parse_mode"] == "MarkdownV2"
+
+    @pytest.mark.asyncio
+    async def test_send_skips_empty_deals(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(self._make_config())
+
+        await notifier.send([])
+
+        bot.send_photo.assert_not_awaited()
+        bot.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_send_multiple_deals_sends_per_deal(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(self._make_config())
+
+        await notifier.send([_sample_deal(), _sample_deal(name="Second")])
+
+        assert bot.send_photo.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_send_continues_after_telegram_error(self, monkeypatch):
+        """A failing deal must not prevent subsequent deals from sending."""
+        bot = self._mock_bot(monkeypatch)
+        from telegram.error import TelegramError
+
+        bot.send_photo.side_effect = [TelegramError("fail"), None]
+
+        notifier = TelegramNotifier(self._make_config())
+        await notifier.send([_sample_deal(name="Fail"), _sample_deal(name="OK")])
+
+        assert bot.send_photo.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_send_includes_action_buttons_with_server_url(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(
+            self._make_config(), server_url="http://localhost:8000",
+        )
+
+        await notifier.send([_sample_deal()])
+
+        markup = bot.send_photo.call_args.kwargs["reply_markup"]
+        assert markup is not None
+        buttons = [btn for row in markup.inline_keyboard for btn in row]
+        labels = [btn.text for btn in buttons]
+        assert "Ignore" in labels
+
+    @pytest.mark.asyncio
+    async def test_watched_deal_has_unwatch_button(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(
+            self._make_config(), server_url="http://localhost:8000",
+        )
+
+        await notifier.send([_sample_deal(is_watched=True)])
+
+        markup = bot.send_photo.call_args.kwargs["reply_markup"]
+        buttons = [btn for row in markup.inline_keyboard for btn in row]
+        labels = [btn.text for btn in buttons]
+        assert "Unwatch" in labels
+        assert not any(label.startswith("Watch ") for label in labels)
+
+    @pytest.mark.asyncio
+    async def test_no_buttons_without_server_url(self, monkeypatch):
+        bot = self._mock_bot(monkeypatch)
+        notifier = TelegramNotifier(self._make_config(), server_url="")
+
+        await notifier.send([_sample_deal()])
+
+        assert bot.send_photo.call_args.kwargs["reply_markup"] is None
 
 
 class TestEmailHtml:
