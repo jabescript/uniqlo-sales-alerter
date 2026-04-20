@@ -36,7 +36,7 @@ def _build_caption(deal: SaleItem, server_url: str = "") -> str:
         orig_md = _escape_md(fp.original_text)
         sale_md = _escape_md(fp.sale_text)
         pct_md = _escape_md(fp.discount_label)
-        price_line = f"~{orig_md}~ ➜ {sale_md} \\(\\{pct_md}\\)"
+        price_line = f"~{orig_md}~ ➜ {sale_md} \\({pct_md}\\)"
     elif fp.show_sale_badge:
         price_line = f"{_escape_md(fp.sale_text)} ✦ {_escape_md(fp.discount_label)}"
     else:
