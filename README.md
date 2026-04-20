@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-hub-2496ED.svg)](https://hub.docker.com/r/kequach/uniqlo-sales-alerter)
 
-A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and sends you notifications when items match your criteria. Talks directly to Uniqlo's internal Commerce API — no browser automation or scraping required.
+A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and sends you notifications when items match your criteria. It talks directly to Uniqlo's internal Commerce API.
 
 ![Mail report](docs/img/mail.png)
 
@@ -20,17 +20,17 @@ A self-hosted server that monitors [Uniqlo](https://www.uniqlo.com) sales and se
 
 ## Quick Start
 
-Start with Docker — no config needed. Set everything up in the browser:
+Start with Docker, no config needed. Set everything up in the browser:
 
 ```bash
 docker run -d --name uniqlo-alerter -p 8000:8000 kequach/uniqlo-sales-alerter
 ```
 
-Open **http://localhost:8000/settings** to configure your country, filters, sizes, and notification channels. Click **Save & Reload** to apply. The app starts with sensible defaults (Germany, 50% min discount, no notifications).
+Open **http://localhost:8000/settings** to configure your country, filters, sizes, and notification channels. Click **Save & Reload** to apply. The app ships with reasonable defaults (Germany, 50% min discount, no notifications enabled).
 
 ![Web UI settings page](docs/img/webUI.png)
 
-The settings page covers everything: country, scheduling, quiet hours, filters, watched variants, ignored products, and notification channels. Changes are saved to `config.yaml` and applied immediately — no restart needed. For long-term use, mount a config file so settings survive container recreation.
+The settings page covers everything: country, scheduling, quiet hours, filters, watched variants, ignored products, and notification channels. Changes are saved to `config.yaml` and applied immediately without a restart. For long-term use, mount a config file so settings survive container recreation.
 
 ### Docker with config file
 
@@ -57,7 +57,7 @@ notifications:
       to_addresses: ["you@gmail.com"]
 ```
 
-See [`config.yaml`](config.yaml) for all available options (scheduling, quiet hours, Telegram, watched variants, and more).
+See [`config.yaml`](config.yaml) for all available options.
 
 Start with Docker Compose (using the shipped [`docker-compose.yml`](docker-compose.yml)):
 
@@ -122,18 +122,18 @@ python -m uniqlo_sales_alerter              # start the server
 python -m uniqlo_sales_alerter --preview-html  # or preview deals in browser
 ```
 
-Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract, and run `pip install -e .` in the folder. The server runs on `http://localhost:8000` with the web UI at `/settings` and API docs at `/docs`.
+Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract it, and run `pip install -e .` in the folder. The server runs on `http://localhost:8000`. The web UI lives at `/settings`, API docs at `/docs`.
 
 </details>
 
 ## Configuration
 
-Configure via the web UI, `config.yaml`, or [environment variables](#environment-variables). On startup, env vars are merged into `config.yaml` so all settings end up in one place. See the [example config](config.yaml) for a fully annotated reference.
+You can configure things through the web UI, `config.yaml`, or [environment variables](#environment-variables). On startup, env vars get merged into `config.yaml` so all settings end up in one place. The [example config](config.yaml) has comments explaining every option.
 
 <details>
 <summary><strong>Supported countries</strong></summary>
 
-**Full support** — discount percentage, original vs. sale price, all filters:
+**Full support** (discount percentage, original vs. sale price, all filters):
 
 | Country | Value | | Country | Value |
 |---------|-------|-|---------|-------|
@@ -148,7 +148,7 @@ Configure via the web UI, `config.yaml`, or [environment variables](#environment
 | Denmark | `dk/en` | | | |
 | Sweden | `se/en` | | | |
 
-**Limited support** — sale-flagged items only (no discount percentage):
+**Limited support** (sale-flagged items only, no discount percentage):
 
 | Country | Value |
 |---------|-------|
@@ -160,7 +160,7 @@ Configure via the web UI, `config.yaml`, or [environment variables](#environment
 
 Limited countries show a "Sale" label instead of a discount percentage. The `min_sale_percentage` filter is automatically skipped; gender and size filters still work.
 
-**Singapore** requires `sale_paths` — see [sale category paths](#sale-category-paths).
+**Singapore** requires `sale_paths`, see [sale category paths](#sale-category-paths).
 
 </details>
 
@@ -176,9 +176,9 @@ Filter by gender (`men`, `women`, `unisex`, `kids`, `baby`), minimum discount pe
 | Clothing | `clothing` | `XXS`, `XS`, `S`, `M`, `L`, `XL`, `XXL`, `3XL` |
 | Pants | `pants` | `22inch` – `40inch` |
 | Shoes | `shoes` | `37` – `43` (half sizes supported) |
-| One Size | `one_size` | Boolean — bags, hats, accessories |
+| One Size | `one_size` | Boolean (bags, hats, accessories) |
 
-A product passes if it has at least one in-stock size matching any configured value.
+A product matches if it has at least one in-stock size that matches any of your configured values.
 
 </details>
 
@@ -194,7 +194,7 @@ filters:
     - url: "https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003"
 ```
 
-**Ignored products** are hidden from all results. Add by product ID or URL. Watched variants take precedence — a watched variant is shown even if its product is ignored.
+**Ignored products** are hidden from all results. Add by product ID or URL. Watched variants take precedence, so a watched variant still shows up even if its product is ignored.
 
 ```yaml
 filters:
@@ -202,14 +202,14 @@ filters:
     - id: "E483049-000"
 ```
 
-Product names and metadata are resolved from the API automatically on startup.
+Product names and metadata are pulled from the API on startup.
 
 ### Scheduling
 
 ```yaml
 uniqlo:
-  check_interval_minutes: 60            # periodic — respects quiet hours (0 to disable)
-  scheduled_checks: ["12:00", "18:00"]  # fixed daily times — ignores quiet hours
+  check_interval_minutes: 60            # periodic, respects quiet hours (0 to disable)
+  scheduled_checks: ["12:00", "18:00"]  # fixed daily times, ignores quiet hours
 
 quiet_hours:
   enabled: true
@@ -217,11 +217,11 @@ quiet_hours:
   end: "08:00"
 ```
 
-Both modes can be used together. When a scheduled check ran recently, the next periodic check is skipped automatically.
+Both modes can be used together. If a scheduled check ran recently, the next periodic check is skipped.
 
 ### Server URL
 
-Set `server_url` to enable **Ignore**, **Watch/Unwatch** action buttons and a **Settings** link in all notification channels. The configured `port` is appended automatically. Leave empty to hide action buttons.
+Set `server_url` to get **Ignore**, **Watch/Unwatch** action buttons and a **Settings** link in your notifications. The `port` is appended automatically. Leave it empty to hide the buttons.
 
 ```yaml
 server_url: "http://192.168.1.50"
@@ -231,7 +231,7 @@ port: 8000
 <details>
 <summary><strong>Sale category paths (Singapore)</strong></summary>
 
-Singapore organises sale items into category paths. Without `sale_paths`, the alerter will miss most items. Find path IDs in the sale page URL (`...?path=5856`):
+Singapore organises sale items into category paths. Without `sale_paths` configured, the alerter will miss most items. You can find path IDs in the sale page URL (`...?path=5856`):
 
 ```yaml
 uniqlo:
@@ -246,7 +246,7 @@ Known paths: `5855` (all), `5856` (men), `5857` (women), `5858` (kids).
 <details>
 <summary><strong>Environment variables</strong></summary>
 
-Every config option can be set via env vars for initial bootstrapping. On first startup they are merged into `config.yaml`; after that the YAML file is the source of truth.
+Every config option can be set via env vars for initial setup. On first startup they get merged into `config.yaml`; after that the YAML file is the source of truth.
 
 | Env variable | Type | Config equivalent |
 |---|---|---|
@@ -289,7 +289,7 @@ Every config option can be set via env vars for initial bootstrapping. On first 
 
 ### Email
 
-HTML emails with product images, prices, discount badges, and direct links per colour+size variant.
+Sends HTML emails with product images, prices, discount badges, and direct links for each colour+size variant.
 
 **Gmail setup:** enable [2-Step Verification](https://myaccount.google.com), create an [App Password](https://myaccount.google.com/apppasswords), then configure:
 
@@ -321,7 +321,7 @@ notifications:
 
 ### Telegram
 
-Photo messages with product image, colour, price, discount, sizes, and a product link.
+Sends photo messages with the product image, colour, price, discount, sizes, and a link to the product page.
 
 1. Message [@BotFather](https://t.me/BotFather), send `/newbot`, copy the **bot token**.
 2. Send a message to your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` for your **chat ID**.
@@ -340,14 +340,14 @@ notifications:
 
 | Mode | Config value | Behaviour |
 |------|-------------|-----------|
-| **All then new** *(default)* | `all_then_new` | All deals on first check, then only changes. |
-| **New deals only** | `new_deals` | Only changes, even across restarts (state persists). |
-| **Every check** | `every_check` | All matching deals every time. Good for digests. |
+| **All then new** *(default)* | `all_then_new` | Sends all deals on the first check, then only new/changed ones. |
+| **New deals only** | `new_deals` | Only new/changed deals, even across restarts (state is persisted). |
+| **Every check** | `every_check` | Sends all matching deals every time. Good for daily digests. |
 
 <details>
 <summary><strong>What counts as a "change"?</strong></summary>
 
-The system tracks `product:color:size:discount%` combinations. A deal is "new" when it has at least one unseen combination (new product, new size, changed discount, or back on sale). In `new_deals` mode state persists to `.seen_variants.json`; delete the file to reset. In `all_then_new` mode state resets on restart.
+Internally, the system tracks `product:color:size:discount%` combinations. A deal counts as "new" when it has at least one unseen combination (new product, new size in stock, changed discount, or back on sale). In `new_deals` mode, state is saved to `.seen_variants.json`; delete the file to reset. In `all_then_new` mode, state resets on restart.
 
 </details>
 
@@ -394,7 +394,7 @@ docker compose logs -f              # live logs
 docker compose down                 # stop and remove
 ```
 
-**Quick preview** (starts the server with CLI preview enabled):
+**Quick preview** (runs a single check and prints results to the terminal):
 
 ```bash
 docker run --rm -p 8000:8000 \
@@ -472,14 +472,14 @@ sudo systemctl restart uniqlo-alerter  # restart
 
 ## Preview Modes
 
-See matching deals locally without sending notifications:
+Check what deals are available without sending any notifications:
 
 ```bash
 python -m uniqlo_sales_alerter --preview-cli    # terminal output
 python -m uniqlo_sales_alerter --preview-html   # HTML report in browser
 ```
 
-Previews can also be enabled alongside notifications via the web UI or `config.yaml`.
+You can also keep previews enabled alongside notifications in the web UI or `config.yaml`.
 
 ![HTML preview report](docs/img/html_preview.png)
 
@@ -513,7 +513,7 @@ Previews can also be enabled alongside notifications via the web UI or `config.y
 
 ## REST API
 
-Interactive docs (Swagger UI) available at `/docs`.
+Swagger UI is at `/docs`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -538,7 +538,7 @@ python -m ruff check src/ tests/
 
 ### How it works
 
-The server talks to Uniqlo's internal Commerce API (the same one their website uses). On each check it queries multiple API versions and flag codes in parallel, deduplicates results, applies filters, verifies real-time stock per variant, and generates direct URLs to purchasable items. A persistent state file tracks seen variants so you only get notified about changes.
+The server uses Uniqlo's internal Commerce API (the same one their website uses). On each check it queries multiple API versions and flag codes in parallel, deduplicates the results, applies your filters, checks real-time stock for each variant, and builds direct URLs to purchasable items. A state file tracks which variants you've already seen so you only get notified about new stuff.
 
 ### Project structure
 
