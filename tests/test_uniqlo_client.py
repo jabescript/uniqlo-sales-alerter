@@ -336,7 +336,8 @@ class TestErrorHandling:
             return_value=httpx.Response(200, json=empty),
         )
 
-        result = await client.fetch_sale_products()
+        with patch("uniqlo_sales_alerter.clients.uniqlo.asyncio.sleep"):
+            result = await client.fetch_sale_products()
         assert result == []
 
     @pytest.mark.asyncio
@@ -383,7 +384,8 @@ class TestFetchProductL2s:
         url = f"{config.base_url}/E123-000/price-groups/00"
         respx.get(url).mock(return_value=httpx.Response(500))
 
-        result = await client.fetch_product_l2s("E123-000", "00")
+        with patch("uniqlo_sales_alerter.clients.uniqlo.asyncio.sleep"):
+            result = await client.fetch_product_l2s("E123-000", "00")
         assert result == []
 
 
@@ -410,7 +412,8 @@ class TestFetchVariantStock:
         url = f"{config.base_url}/E123-000/price-groups/00/stock"
         respx.get(url).mock(return_value=httpx.Response(500))
 
-        result = await client.fetch_variant_stock("E123-000", "00")
+        with patch("uniqlo_sales_alerter.clients.uniqlo.asyncio.sleep"):
+            result = await client.fetch_variant_stock("E123-000", "00")
         assert result == {}
 
 
@@ -601,30 +604,22 @@ class TestBackoffHelpers:
         assert _backoff_seconds(1, jitter=False) == 2.0
         assert _backoff_seconds(2, jitter=False) == 4.0
         assert _backoff_seconds(3, jitter=False) == 8.0
-
-    def test_backoff_capped_at_max(self):
-        assert _backoff_seconds(10, jitter=False) == 60.0
+        assert _backoff_seconds(10, jitter=False) == 60.0  # capped at max
 
     def test_backoff_with_jitter_in_range(self):
         for _ in range(50):
             val = _backoff_seconds(2, jitter=True)
             assert 2.0 <= val <= 6.0
 
-    def test_retry_after_numeric(self):
-        resp = httpx.Response(429, headers={"retry-after": "10"})
-        assert _retry_after(resp) == 10.0
-
-    def test_retry_after_capped(self):
-        resp = httpx.Response(429, headers={"retry-after": "999"})
-        assert _retry_after(resp) == 60.0
-
-    def test_retry_after_missing(self):
-        resp = httpx.Response(429)
-        assert _retry_after(resp) is None
-
-    def test_retry_after_non_numeric(self):
-        resp = httpx.Response(429, headers={"retry-after": "not-a-number"})
-        assert _retry_after(resp) is None
+    @pytest.mark.parametrize("headers,expected", [
+        ({"retry-after": "10"}, 10.0),
+        ({"retry-after": "999"}, 60.0),
+        ({}, None),
+        ({"retry-after": "not-a-number"}, None),
+    ], ids=["numeric", "capped", "missing", "non_numeric"])
+    def test_retry_after(self, headers, expected):
+        resp = httpx.Response(429, headers=headers)
+        assert _retry_after(resp) == expected
 
 
 class TestNormalizeV3Product:

@@ -28,29 +28,29 @@ def _raw(pid="E001", base=100, promo=40, gender=_MEN, **kw):
 
 
 class TestUniqloProduct:
-    def test_is_on_sale(self):
-        p = _product(make_raw_product(base_price=100, promo_price=60))
-        assert p.is_on_sale is True
+    @pytest.mark.parametrize("promo_price,expected", [
+        (60, True),
+        (None, False),
+    ], ids=["on_sale", "no_promo"])
+    def test_is_on_sale(self, promo_price, expected):
+        p = _product(make_raw_product(base_price=100, promo_price=promo_price))
+        assert p.is_on_sale is expected
 
-    def test_not_on_sale_when_no_promo(self):
-        p = _product(make_raw_product(base_price=100, promo_price=None))
-        assert p.is_on_sale is False
+    @pytest.mark.parametrize("promo_price,expected", [
+        (60, 40.0),
+        (None, 0.0),
+    ], ids=["discounted", "no_promo"])
+    def test_discount_percentage(self, promo_price, expected):
+        p = _product(make_raw_product(base_price=100, promo_price=promo_price))
+        assert p.discount_percentage == expected
 
-    def test_discount_percentage(self):
-        p = _product(make_raw_product(base_price=100, promo_price=60))
-        assert p.discount_percentage == 40.0
-
-    def test_discount_percentage_zero_when_not_on_sale(self):
-        p = _product(make_raw_product(base_price=100))
-        assert p.discount_percentage == 0.0
-
-    def test_main_image_url(self):
-        p = _product(make_raw_product(image_url="https://example.com/img.jpg"))
-        assert p.main_image_url == "https://example.com/img.jpg"
-
-    def test_main_image_url_none(self):
-        p = _product(make_raw_product(image_url=None))
-        assert p.main_image_url is None
+    @pytest.mark.parametrize("image_url,expected", [
+        ("https://example.com/img.jpg", "https://example.com/img.jpg"),
+        (None, None),
+    ], ids=["has_image", "no_image"])
+    def test_main_image_url(self, image_url, expected):
+        p = _product(make_raw_product(image_url=image_url))
+        assert p.main_image_url == expected
 
     def test_size_names(self):
         p = _product(make_raw_product(sizes=["XS", "S", "M"]))
@@ -911,23 +911,14 @@ class TestUnknownDiscountFiltering:
     def checker(self, sale_config: AppConfig) -> SaleChecker:
         return SaleChecker(sale_config)
 
-    def test_unknown_discount_items_pass_through(self, checker: SaleChecker):
-        """Items with promo == base should not be dropped."""
+    def test_unknown_discount_passes_through(self, checker: SaleChecker):
+        """Items with promo == base pass filters, bypass min_percentage,
+        and set has_known_discount=False."""
         products = [_product(_raw("E001", base=50, promo=50))]
         result = checker._apply_filters(products)
         assert len(result) == 1
         assert result[0].product_id == "E001"
-
-    def test_unknown_discount_bypasses_min_percentage(self, checker: SaleChecker):
-        """Items without a known discount bypass min_sale_percentage."""
-        products = [_product(_raw("E001", base=50, promo=50))]
-        result = checker._apply_filters(products)
-        assert len(result) == 1
         assert result[0].discount_percentage == 0
-
-    def test_unknown_discount_has_known_discount_false(self, checker: SaleChecker):
-        products = [_product(_raw("E001", base=50, promo=50))]
-        result = checker._apply_filters(products)
         assert result[0].has_known_discount is False
 
     def test_known_discount_has_known_discount_true(self, checker: SaleChecker):
@@ -935,13 +926,12 @@ class TestUnknownDiscountFiltering:
         result = checker._apply_filters(products)
         assert result[0].has_known_discount is True
 
-    def test_unknown_discount_still_filtered_by_gender(self, checker: SaleChecker):
-        products = [_product(_raw("E001", base=50, promo=50, gender="WOMEN"))]
-        result = checker._apply_filters(products)
-        assert len(result) == 0
-
-    def test_unknown_discount_still_filtered_by_size(self, checker: SaleChecker):
-        products = [_product(_raw("E001", base=50, promo=50, sizes=["XXS"]))]
+    @pytest.mark.parametrize("raw_kwargs", [
+        pytest.param(dict(base=50, promo=50, gender="WOMEN"), id="wrong_gender"),
+        pytest.param(dict(base=50, promo=50, sizes=["XXS"]), id="wrong_size"),
+    ])
+    def test_unknown_discount_still_filtered(self, checker: SaleChecker, raw_kwargs):
+        products = [_product(_raw("E001", **raw_kwargs))]
         result = checker._apply_filters(products)
         assert len(result) == 0
 
@@ -975,55 +965,61 @@ class TestUnknownDiscountFiltering:
 class TestVariantKeys:
     """Unit tests for the static _variant_keys helper."""
 
-    def test_extracts_keys_from_urls(self):
-        item = sample_deal(
-            product_id="E001", discount_percentage=60,
-            available_sizes=["M", "L"],
-            product_urls=[
-                "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
-                "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005",
-            ],
-        )
-        keys = SaleChecker._variant_keys(item)
-        assert keys == {"E001:09:004:60", "E001:09:005:60"}
-
-    def test_different_colors_same_size(self):
-        item = sample_deal(
-            product_id="E001", discount_percentage=60,
-            available_sizes=["M"],
-            product_urls=[
-                "https://x.com/products/E001/00?colorDisplayCode=01&sizeDisplayCode=004",
-                "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
-            ],
-        )
-        keys = SaleChecker._variant_keys(item)
-        assert keys == {"E001:01:004:60", "E001:09:004:60"}
-
-    def test_falls_back_to_product_id_when_no_urls(self):
-        item = sample_deal(
-            product_id="E001", discount_percentage=60,
-            available_sizes=["M"], product_urls=[],
-        )
-        keys = SaleChecker._variant_keys(item)
-        assert keys == {"E001:60"}
-
-    def test_unknown_discount_uses_sale_suffix(self):
-        item = sample_deal(
-            product_id="E001", original_price=50, sale_price=50,
-            discount_percentage=0, has_known_discount=False,
-            available_sizes=["M"],
-            product_urls=[
-                "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
-            ],
-        )
-        keys = SaleChecker._variant_keys(item)
-        assert keys == {"E001:09:004:sale"}
-
-    def test_unknown_discount_fallback_uses_sale_suffix(self):
-        item = sample_deal(
-            product_id="E001", original_price=50, sale_price=50,
-            discount_percentage=0, has_known_discount=False,
-            available_sizes=["M"], product_urls=[],
-        )
-        keys = SaleChecker._variant_keys(item)
-        assert keys == {"E001:sale"}
+    @pytest.mark.parametrize("deal_kwargs,expected_keys", [
+        pytest.param(
+            dict(
+                product_id="E001", discount_percentage=60,
+                available_sizes=["M", "L"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+                    "https://www.uniqlo.com/de/de/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005",
+                ],
+            ),
+            {"E001:09:004:60", "E001:09:005:60"},
+            id="extracts_keys_from_urls",
+        ),
+        pytest.param(
+            dict(
+                product_id="E001", discount_percentage=60,
+                available_sizes=["M"],
+                product_urls=[
+                    "https://x.com/products/E001/00?colorDisplayCode=01&sizeDisplayCode=004",
+                    "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+            ),
+            {"E001:01:004:60", "E001:09:004:60"},
+            id="different_colors_same_size",
+        ),
+        pytest.param(
+            dict(
+                product_id="E001", discount_percentage=60,
+                available_sizes=["M"], product_urls=[],
+            ),
+            {"E001:60"},
+            id="fallback_no_urls",
+        ),
+        pytest.param(
+            dict(
+                product_id="E001", original_price=50, sale_price=50,
+                discount_percentage=0, has_known_discount=False,
+                available_sizes=["M"],
+                product_urls=[
+                    "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+            ),
+            {"E001:09:004:sale"},
+            id="unknown_discount_with_url",
+        ),
+        pytest.param(
+            dict(
+                product_id="E001", original_price=50, sale_price=50,
+                discount_percentage=0, has_known_discount=False,
+                available_sizes=["M"], product_urls=[],
+            ),
+            {"E001:sale"},
+            id="unknown_discount_fallback",
+        ),
+    ])
+    def test_variant_keys(self, deal_kwargs, expected_keys):
+        item = sample_deal(**deal_kwargs)
+        assert SaleChecker._variant_keys(item) == expected_keys

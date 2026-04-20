@@ -21,6 +21,8 @@ from uniqlo_sales_alerter.notifications.telegram import TelegramNotifier, _build
 
 from .conftest import sample_deal as _sample_deal
 
+_REPORT_TS = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+
 _UNKNOWN_DISCOUNT_OVERRIDES = dict(
     original_price=49.90,
     sale_price=49.90,
@@ -28,6 +30,89 @@ _UNKNOWN_DISCOUNT_OVERRIDES = dict(
     has_known_discount=False,
     currency_symbol="$",
 )
+
+
+def _render_console(deal):
+    return _format_deal(deal, 1)
+
+
+def _render_telegram(deal):
+    return _build_caption(deal)
+
+
+def _render_email(deal):
+    return _build_html([deal])
+
+
+def _render_report(deal):
+    return _build_report([deal], _REPORT_TS)
+
+
+_RENDERERS = {
+    "console": _render_console,
+    "telegram": _render_telegram,
+    "email": _render_email,
+    "html_report": _render_report,
+}
+
+
+class TestCrossChannelColorLabel:
+    """Color label display must be consistent across all four notification channels."""
+
+    def test_shows_color(self):
+        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
+        for name, render in _RENDERERS.items():
+            assert "SCHWARZ" in render(deal), f"{name} should show color name"
+
+    def test_hides_color_when_empty(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        absent = {"html_report": '<div class="color-label">'}
+        for name, render in _RENDERERS.items():
+            marker = absent.get(name, "Color:")
+            assert marker not in render(deal), f"{name} should hide color label"
+
+
+class TestCrossChannelWatchedBadge:
+    """Watched badge must appear in all notification channels that render deals."""
+
+    def test_watched_badge_shown(self):
+        deal = _sample_deal(is_watched=True)
+        for name in ("telegram", "email", "html_report"):
+            output = _RENDERERS[name](deal)
+            assert "watched" in output.lower(), f"{name} should show watched badge"
+
+
+class TestCrossChannelUnknownDiscount:
+    """All channels show 'Sale' for unknown-discount items, strikethrough/percentage for known."""
+
+    _SALE_LABEL = {
+        "console": {"present": ["(Sale)"], "absent": ["%", "->"]},
+        "telegram": {"present": ["Sale"], "absent": ["~"]},
+        "email": {"present": ["Sale"], "absent": ["line-through"]},
+        "html_report": {"present": [">Sale</span>"], "absent": ['class="price-old"']},
+    }
+    _KNOWN_DISCOUNT = {
+        "console": ["%", "->"],
+        "telegram": ["~"],
+        "email": ["line-through"],
+        "html_report": ["price-old", "%"],
+    }
+
+    def test_unknown_discount_shows_sale_label(self):
+        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
+        for name, render in _RENDERERS.items():
+            output = render(deal)
+            for s in self._SALE_LABEL[name]["present"]:
+                assert s in output, f"{name} should show '{s}'"
+            for s in self._SALE_LABEL[name]["absent"]:
+                assert s not in output, f"{name} should not show '{s}'"
+
+    def test_known_discount_shows_original_price(self):
+        deal = _sample_deal()
+        for name, render in _RENDERERS.items():
+            output = render(deal)
+            for s in self._KNOWN_DISCOUNT[name]:
+                assert s in output, f"{name} should show '{s}'"
 
 
 class TestTelegramCaption:
@@ -41,39 +126,20 @@ class TestTelegramCaption:
         assert "[M](" in caption
         assert "[L](" in caption
 
-    def test_watched_badge(self):
-        deal = _sample_deal(is_watched=True)
-        caption = _build_caption(deal)
-        assert "Watched item" in caption
-
     def test_no_watched_badge(self):
         deal = _sample_deal(is_watched=False)
         caption = _build_caption(deal)
         assert "Watched" not in caption
 
-    def test_caption_shows_color(self):
-        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
-        caption = _build_caption(deal)
-        assert "Color: SCHWARZ" in caption
-
-    def test_caption_hides_color_when_empty(self):
-        deal = _sample_deal(color_names=["", "", ""])
-        caption = _build_caption(deal)
-        assert "Color:" not in caption
-
 
 class TestTelegramNotifier:
-    def test_is_enabled(self):
-        cfg = TelegramChannelConfig(enabled=True, bot_token="tok", chat_id="123")
-        assert TelegramNotifier(cfg).is_enabled() is True
-
-    def test_disabled_when_no_token(self):
-        cfg = TelegramChannelConfig(enabled=True, bot_token="", chat_id="123")
-        assert TelegramNotifier(cfg).is_enabled() is False
-
-    def test_disabled_when_flag_off(self):
-        cfg = TelegramChannelConfig(enabled=False, bot_token="tok", chat_id="123")
-        assert TelegramNotifier(cfg).is_enabled() is False
+    @pytest.mark.parametrize("cfg_kwargs,expected", [
+        (dict(enabled=True, bot_token="tok", chat_id="123"), True),
+        (dict(enabled=True, bot_token="", chat_id="123"), False),
+        (dict(enabled=False, bot_token="tok", chat_id="123"), False),
+    ], ids=["enabled", "no_token", "flag_off"])
+    def test_is_enabled(self, cfg_kwargs, expected):
+        assert TelegramNotifier(TelegramChannelConfig(**cfg_kwargs)).is_enabled() is expected
 
 
 class TestEmailHtml:
@@ -94,26 +160,10 @@ class TestEmailHtml:
         assert ">M</a>" in html
         assert ">L</a>" in html
 
-    def test_html_watched_badge(self):
-        deal = _sample_deal(is_watched=True)
-        html = _build_html([deal])
-        assert "Watched" in html
-
-    def test_html_shows_color_name(self):
-        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
-        html = _build_html([deal])
-        assert "SCHWARZ" in html
-        assert "Color:" in html
-
-    def test_html_hides_color_when_empty(self):
-        deal = _sample_deal(color_names=["", "", ""])
-        html = _build_html([deal])
-        assert "Color:" not in html
-
     def test_html_expands_to_per_variant_rows(self):
         deal = _sample_deal()
         html = _build_html([deal])
-        assert html.count("<tr") == 3  # one row per size variant
+        assert html.count("<tr") == 3
 
     def test_expand_to_variants_splits_sizes(self):
         deal = _sample_deal()
@@ -144,17 +194,14 @@ def _make_email_cfg(**overrides) -> EmailChannelConfig:
 
 
 class TestEmailNotifier:
-    def test_is_enabled(self):
-        assert EmailNotifier(_make_email_cfg()).is_enabled() is True
-
-    def test_disabled_when_no_recipients(self):
-        assert EmailNotifier(_make_email_cfg(to_addresses=[])).is_enabled() is False
-
-    def test_disabled_when_no_from_address(self):
-        assert EmailNotifier(_make_email_cfg(from_address="")).is_enabled() is False
-
-    def test_disabled_when_flag_off(self):
-        assert EmailNotifier(_make_email_cfg(enabled=False)).is_enabled() is False
+    @pytest.mark.parametrize("overrides,expected", [
+        ({}, True),
+        (dict(to_addresses=[]), False),
+        (dict(from_address=""), False),
+        (dict(enabled=False), False),
+    ], ids=["enabled", "no_recipients", "no_from", "flag_off"])
+    def test_is_enabled(self, overrides, expected):
+        assert EmailNotifier(_make_email_cfg(**overrides)).is_enabled() is expected
 
     @pytest.mark.asyncio
     async def test_send_calls_aiosmtplib(self, monkeypatch):
@@ -302,58 +349,37 @@ class TestNotificationDispatcher:
         custom.send.assert_awaited_once_with(deals)
 
     @pytest.mark.asyncio
-    async def test_preview_cli_includes_console_and_real_channels(self):
-        config = AppConfig.model_validate({
-            "notifications": {"preview_cli": True},
-        })
-        dispatcher = NotificationDispatcher(config)
-        types = {type(n).__name__ for n in dispatcher._notifiers}
-        assert "ConsoleNotifier" in types
-        assert "TelegramNotifier" in types
-        assert "EmailNotifier" in types
-
-    @pytest.mark.asyncio
-    async def test_preview_html_includes_html_report_and_real_channels(self):
-        config = AppConfig.model_validate({
-            "notifications": {"preview_html": True},
-        })
-        dispatcher = NotificationDispatcher(config)
-        types = {type(n).__name__ for n in dispatcher._notifiers}
-        assert "HtmlReportNotifier" in types
-        assert "TelegramNotifier" in types
-        assert "EmailNotifier" in types
-        assert "ConsoleNotifier" not in types
-
-    @pytest.mark.asyncio
-    async def test_both_previews_and_real_channels(self):
-        config = AppConfig.model_validate({
-            "notifications": {"preview_cli": True, "preview_html": True},
-        })
-        dispatcher = NotificationDispatcher(config)
-
-        types = {type(n).__name__ for n in dispatcher._notifiers}
-        assert "ConsoleNotifier" in types
-        assert "HtmlReportNotifier" in types
-        assert "TelegramNotifier" in types
-        assert "EmailNotifier" in types
-
-    @pytest.mark.asyncio
-    async def test_no_preview_only_real_channels(self):
-        config = AppConfig()
-        dispatcher = NotificationDispatcher(config)
-        types = {type(n).__name__ for n in dispatcher._notifiers}
-        assert "TelegramNotifier" in types
-        assert "EmailNotifier" in types
-        assert "ConsoleNotifier" not in types
-        assert "HtmlReportNotifier" not in types
+    async def test_preview_mode_notifiers(self):
+        cases = [
+            ({"preview_cli": True},
+             {"ConsoleNotifier", "TelegramNotifier", "EmailNotifier"}, set()),
+            ({"preview_html": True},
+             {"HtmlReportNotifier", "TelegramNotifier", "EmailNotifier"},
+             {"ConsoleNotifier"}),
+            ({"preview_cli": True, "preview_html": True},
+             {"ConsoleNotifier", "HtmlReportNotifier",
+              "TelegramNotifier", "EmailNotifier"}, set()),
+            ({},
+             {"TelegramNotifier", "EmailNotifier"},
+             {"ConsoleNotifier", "HtmlReportNotifier"}),
+        ]
+        for cfg_overrides, expected_present, expected_absent in cases:
+            config = AppConfig.model_validate(
+                {"notifications": cfg_overrides},
+            )
+            dispatcher = NotificationDispatcher(config)
+            types = {type(n).__name__ for n in dispatcher._notifiers}
+            label = str(cfg_overrides)
+            for name in expected_present:
+                assert name in types, f"{name} should be present ({label})"
+            for name in expected_absent:
+                assert name not in types, f"{name} should be absent ({label})"
 
 
 class TestConsoleNotifier:
-    def test_is_enabled(self):
-        assert ConsoleNotifier(enabled=True).is_enabled() is True
-
-    def test_is_disabled(self):
-        assert ConsoleNotifier(enabled=False).is_enabled() is False
+    @pytest.mark.parametrize("enabled,expected", [(True, True), (False, False)])
+    def test_is_enabled(self, enabled, expected):
+        assert ConsoleNotifier(enabled=enabled).is_enabled() is expected
 
     def test_protocol_compliance(self):
         assert isinstance(ConsoleNotifier(), Notifier)
@@ -378,23 +404,10 @@ class TestConsoleNotifier:
         output = capsys.readouterr().out
         assert "No deals" in output
 
-    def test_format_deal_shows_color(self):
-        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
-        output = _format_deal(deal, 1)
-        assert "Color:" in output
-        assert "SCHWARZ" in output
-
-    def test_format_deal_hides_color_when_empty(self):
-        deal = _sample_deal(color_names=["", "", ""])
-        output = _format_deal(deal, 1)
-        assert "Color:" not in output
-
 
 class TestHtmlReport:
-    _TS = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
-
     def test_report_contains_deal_info(self):
-        html = _build_report([_sample_deal()], self._TS)
+        html = _build_report([_sample_deal()], _REPORT_TS)
         assert "Test T-Shirt" in html
         assert "19.90" in html
         assert "39.90" in html
@@ -402,49 +415,32 @@ class TestHtmlReport:
         assert "1 deal(s)" in html
 
     def test_report_contains_images(self):
-        html = _build_report([_sample_deal()], self._TS)
+        html = _build_report([_sample_deal()], _REPORT_TS)
         assert "image.uniqlo.com/test.jpg" in html
         assert "<img" in html
 
     def test_report_contains_size_links(self):
-        html = _build_report([_sample_deal()], self._TS)
+        html = _build_report([_sample_deal()], _REPORT_TS)
         assert "size-chip" in html
         assert ">S</a>" in html
         assert ">M</a>" in html
         assert ">L</a>" in html
 
-    def test_report_watched_badge(self):
-        html = _build_report([_sample_deal(is_watched=True)], self._TS)
-        assert "WATCHED" in html
-
     def test_report_no_image_fallback(self):
-        html = _build_report([_sample_deal(image_url=None)], self._TS)
+        html = _build_report([_sample_deal(image_url=None)], _REPORT_TS)
         assert "No image" in html
 
     def test_report_uses_uniqlo_brand_colors(self):
-        html = _build_report([_sample_deal()], self._TS)
+        html = _build_report([_sample_deal()], _REPORT_TS)
         assert "#ED1D24" in html
         assert '<div class="logo">UNIQLO</div>' in html
         assert "<header>" in html
 
-    def test_report_shows_color_label(self):
-        deal = _sample_deal(color_names=["SCHWARZ", "SCHWARZ", "SCHWARZ"])
-        html = _build_report([deal], self._TS)
-        assert "color-label" in html
-        assert "SCHWARZ" in html
-
-    def test_report_hides_color_when_empty(self):
-        deal = _sample_deal(color_names=["", "", ""])
-        html = _build_report([deal], self._TS)
-        assert '<div class="color-label">' not in html
-
 
 class TestHtmlReportNotifier:
-    def test_is_enabled(self):
-        assert HtmlReportNotifier(enabled=True).is_enabled() is True
-
-    def test_is_disabled(self):
-        assert HtmlReportNotifier(enabled=False).is_enabled() is False
+    @pytest.mark.parametrize("enabled,expected", [(True, True), (False, False)])
+    def test_is_enabled(self, enabled, expected):
+        assert HtmlReportNotifier(enabled=enabled).is_enabled() is expected
 
     def test_protocol_compliance(self):
         assert isinstance(HtmlReportNotifier(), Notifier)
@@ -539,56 +535,3 @@ class TestResolveColorImage:
         assert len(variants) == 2
         assert "_01_" in variants[0].image_url
         assert "_69_" in variants[1].image_url
-
-
-class TestUnknownDiscountDisplay:
-    """Verify all formatters show 'Sale' instead of a percentage for unknown-discount items."""
-
-    def test_console_shows_sale_label(self):
-        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
-        output = _format_deal(deal, 1)
-        assert "(Sale)" in output
-        assert "%" not in output
-        assert "->" not in output
-
-    def test_console_known_discount_shows_percentage(self):
-        deal = _sample_deal()
-        output = _format_deal(deal, 1)
-        assert "%" in output
-        assert "->" in output
-
-    def test_telegram_shows_sale_label(self):
-        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
-        caption = _build_caption(deal)
-        assert "Sale" in caption
-        assert "~" not in caption
-
-    def test_telegram_known_discount_shows_strikethrough(self):
-        deal = _sample_deal()
-        caption = _build_caption(deal)
-        assert "~" in caption
-
-    def test_email_shows_sale_label(self):
-        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
-        html = _build_html([deal])
-        assert "Sale" in html
-        assert "line-through" not in html
-
-    def test_email_known_discount_shows_strikethrough(self):
-        deal = _sample_deal()
-        html = _build_html([deal])
-        assert "line-through" in html
-
-    def test_html_report_shows_sale_label(self):
-        ts = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
-        deal = _sample_deal(**_UNKNOWN_DISCOUNT_OVERRIDES)
-        html = _build_report([deal], ts)
-        assert ">Sale</span>" in html
-        assert 'class="price-old"' not in html
-
-    def test_html_report_known_discount_shows_percentage(self):
-        ts = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
-        deal = _sample_deal()
-        html = _build_report([deal], ts)
-        assert "price-old" in html
-        assert "%" in html

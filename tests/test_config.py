@@ -117,47 +117,38 @@ class TestLoadConfig:
 
 
 class TestCoerce:
-    def test_str(self):
-        assert _coerce("hello", "str") == "hello"
+    @pytest.mark.parametrize("value,type_name,expected", [
+        ("hello", "str", "hello"),
+        ("42", "int", 42),
+        ("30.5", "float", 30.5),
+        ("S, M, L", "list", ["S", "M", "L"]),
+        ("men", "list", ["men"]),
+        ("", "list", []),
+    ])
+    def test_coerce(self, value, type_name, expected):
+        assert _coerce(value, type_name) == expected
 
-    def test_int(self):
-        assert _coerce("42", "int") == 42
-
-    def test_float(self):
-        assert _coerce("30.5", "float") == 30.5
-
-    def test_bool_true(self):
+    def test_coerce_bool_true(self):
         for val in ("1", "true", "True", "TRUE", "yes", "YES"):
             assert _coerce(val, "bool") is True
 
-    def test_bool_false(self):
+    def test_coerce_bool_false(self):
         for val in ("0", "false", "no", "other"):
             assert _coerce(val, "bool") is False
 
-    def test_list(self):
-        assert _coerce("S, M, L", "list") == ["S", "M", "L"]
-
-    def test_list_single_item(self):
-        assert _coerce("men", "list") == ["men"]
-
-    def test_list_empty_string(self):
-        assert _coerce("", "list") == []
-
 
 class TestDeepMerge:
-    def test_flat(self):
-        assert _deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
-
-    def test_override(self):
-        assert _deep_merge({"a": 1}, {"a": 2}) == {"a": 2}
-
-    def test_nested(self):
-        base = {"a": {"x": 1, "y": 2}}
-        over = {"a": {"y": 3, "z": 4}}
-        assert _deep_merge(base, over) == {"a": {"x": 1, "y": 3, "z": 4}}
-
-    def test_override_replaces_non_dict(self):
-        assert _deep_merge({"a": [1]}, {"a": [2, 3]}) == {"a": [2, 3]}
+    @pytest.mark.parametrize("base,override,expected", [
+        pytest.param({"a": 1}, {"b": 2}, {"a": 1, "b": 2}, id="flat"),
+        pytest.param({"a": 1}, {"a": 2}, {"a": 2}, id="override"),
+        pytest.param(
+            {"a": {"x": 1, "y": 2}}, {"a": {"y": 3, "z": 4}},
+            {"a": {"x": 1, "y": 3, "z": 4}}, id="nested",
+        ),
+        pytest.param({"a": [1]}, {"a": [2, 3]}, {"a": [2, 3]}, id="non_dict_override"),
+    ])
+    def test_deep_merge(self, base, override, expected):
+        assert _deep_merge(base, override) == expected
 
 
 class TestConfigFromEnv:
