@@ -11,8 +11,13 @@ dedicated job::
 
 from __future__ import annotations
 
+import asyncio
 import html as html_mod
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -29,6 +34,7 @@ from uniqlo_sales_alerter.notifications.html_report import (
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 
 _E2E_TIMEOUT = 30
+_SWEEP_CONCURRENCY = 5
 
 
 def _api_reachable(country_code: str = "de", lang: str = "de") -> bool:
@@ -62,8 +68,67 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-_cached_deals: list[SaleItem] | None = None
-_cached_config: AppConfig | None = None
+# ---------------------------------------------------------------------------
+# Per-country pipeline cache — each country's API is hit at most once
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CountryData:
+    """Cached pipeline results for one country."""
+
+    config: AppConfig
+    raw_products: list
+    matching_deals: list[SaleItem]
+    pre_verify_count: int
+
+
+_country_cache: dict[str, _CountryData] = {}
+_CACHE_TMP = Path(tempfile.mkdtemp(prefix="e2e_uniqlo_"))
+
+
+async def _get_country_data(country: str) -> _CountryData:
+    """Run the full pipeline for *country* once, then return cached results.
+
+    First call fetches sale products and runs ``SaleChecker.check()`` (with
+    the fetch result reused via a mock so we don't hit the API twice).
+    Subsequent calls return the cached ``_CountryData`` immediately.
+    """
+    if country in _country_cache:
+        return _country_cache[country]
+
+    config = AppConfig.model_validate({
+        "uniqlo": {"country": country, "check_interval_minutes": 0},
+        "filters": {
+            "gender": ["men", "women"],
+            "min_sale_percentage": 0,
+        },
+        "notifications": {"notify_on": "every_check"},
+    })
+
+    state = _CACHE_TMP / f"state_{country.replace('/', '_')}.json"
+    checker = SaleChecker(config, state_file=state)
+    try:
+        raw = await checker._client.fetch_sale_products()
+        sale_pids = {p.product_id.upper() for p in raw}
+        pre_verify_count = len(checker._apply_filters(raw, sale_pids))
+
+        with patch.object(
+            checker._client, "fetch_sale_products",
+            new_callable=AsyncMock, return_value=raw,
+        ):
+            result = await checker.check()
+
+        data = _CountryData(
+            config=config,
+            raw_products=raw,
+            matching_deals=result.matching_deals,
+            pre_verify_count=pre_verify_count,
+        )
+        _country_cache[country] = data
+        return data
+    finally:
+        await checker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -72,46 +137,22 @@ _cached_config: AppConfig | None = None
 
 
 @pytest.fixture()
-def e2e_config() -> AppConfig:
-    """Minimal config targeting Germany with relaxed filters so we get results."""
-    global _cached_config
-    if _cached_config is None:
-        _cached_config = AppConfig.model_validate({
-            "uniqlo": {"country": "de/de", "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
-    return _cached_config
+async def e2e_config() -> AppConfig:
+    """Config for Germany, populated lazily via the cache."""
+    data = await _get_country_data("de/de")
+    return data.config
 
 
 @pytest.fixture()
-async def live_deals(e2e_config: AppConfig, tmp_path) -> list[SaleItem]:
-    """Run the real sale-check pipeline once and cache the result.
-
-    The Uniqlo API rate-limits aggressive callers, so we fetch only once
-    per test session and share the result across all tests.
-    """
-    global _cached_deals
-    if _cached_deals is not None:
-        return _cached_deals
-
-    checker = SaleChecker(e2e_config, state_file=tmp_path / ".state.json")
-    try:
-        result = await checker.check()
-    finally:
-        await checker.close()
-
-    if not result.matching_deals:
+async def live_deals() -> list[SaleItem]:
+    """Pipeline results for Germany, cached across all tests."""
+    data = await _get_country_data("de/de")
+    if not data.matching_deals:
         pytest.skip(
             "Live sale check returned zero deals — API may be rate-limiting "
             "or there are genuinely no sale items right now."
         )
-
-    _cached_deals = result.matching_deals
-    return _cached_deals
+    return data.matching_deals
 
 
 # ---------------------------------------------------------------------------
@@ -337,40 +378,25 @@ class TestSeaCountryPipeline:
     """Verify the full pipeline works for countries with unreliable stock APIs.
 
     PH and TH use v3 listing endpoints and have ``stock_api="none"`` in the
-    capabilities registry.  This test ensures that:
-    - ``fetch_sale_products`` returns results via the correct endpoints
-    - stock verification is skipped (no items erroneously dropped)
-    - deals have valid fields suitable for notifications
+    capabilities registry.  Each country's pipeline runs at most once — the
+    result is cached and shared across all tests in this class.
     """
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
-    async def test_sea_pipeline_returns_deals(self, country: str, tmp_path):
+    async def test_sea_pipeline_returns_deals(self, country: str):
         """Full pipeline for a SEA country produces valid deals."""
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
-        assert config.capabilities.stock_api == "none", (
+        data = await _get_country_data(country)
+        assert data.config.capabilities.stock_api == "none", (
             f"Expected stock_api='none' for {country}"
         )
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
-        try:
-            result = await checker.check()
-        finally:
-            await checker.close()
-
-        if not result.matching_deals:
+        if not data.matching_deals:
             pytest.skip(
                 f"Live sale check for {country} returned zero deals — "
                 "API may be rate-limiting or there are no sale items."
             )
 
-        for deal in result.matching_deals:
+        for deal in data.matching_deals:
             assert deal.product_id, "product_id must not be empty"
             assert deal.name, "name must not be empty"
             assert deal.sale_price > 0, (
@@ -381,89 +407,47 @@ class TestSeaCountryPipeline:
             )
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
-    async def test_sea_no_items_dropped(self, country: str, tmp_path):
+    async def test_sea_no_items_dropped(self, country: str):
         """stock_api='none' countries must never drop items during verification."""
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
+        data = await _get_country_data(country)
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
-        try:
-            products = await checker._client.fetch_sale_products()
-        finally:
-            await checker.close()
-
-        if not products:
+        if not data.raw_products:
             pytest.skip(
                 f"No sale products returned for {country} — "
                 "API may be rate-limiting."
             )
 
-        items_before = checker._apply_filters(products)
-        items_after = await checker._verify_stock(items_before)
-
-        assert len(items_after) == len(items_before), (
+        assert len(data.matching_deals) == data.pre_verify_count, (
             f"stock_api='none' must not drop any items: "
-            f"had {len(items_before)}, got {len(items_after)}"
+            f"had {data.pre_verify_count}, got {len(data.matching_deals)}"
         )
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
-    async def test_sea_listing_not_truncated(self, country: str, tmp_path):
+    async def test_sea_listing_not_truncated(self, country: str):
         """Pagination must retrieve all available items, not just one page."""
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
+        data = await _get_country_data(country)
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
-        try:
-            products = await checker._client.fetch_sale_products()
-        finally:
-            await checker.close()
-
-        if not products:
+        if not data.raw_products:
             pytest.skip(
                 f"No sale products returned for {country} — "
                 "API may be rate-limiting."
             )
 
-        assert len(products) >= 50, (
+        assert len(data.raw_products) >= 50, (
             f"Expected at least 50 raw sale products for {country}, "
-            f"got {len(products)} — pagination may be truncated"
+            f"got {len(data.raw_products)} — pagination may be truncated"
         )
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
-    async def test_sea_urls_use_code_style(self, country: str, tmp_path):
+    async def test_sea_urls_use_code_style(self, country: str):
         """SEA countries must use colorCode/sizeCode URL format."""
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
-        assert config.capabilities.url_style == "code"
+        data = await _get_country_data(country)
+        assert data.config.capabilities.url_style == "code"
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
-        try:
-            result = await checker.check()
-        finally:
-            await checker.close()
-
-        if not result.matching_deals:
+        if not data.matching_deals:
             pytest.skip(f"No deals for {country}")
 
-        for deal in result.matching_deals:
+        for deal in data.matching_deals:
             for url in deal.product_urls:
                 if not url:
                     continue
@@ -491,29 +475,18 @@ class TestSeaCountryPipeline:
                 )
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
-    async def test_sea_products_resolvable(self, country: str, tmp_path):
-        """A sample of SEA products must be resolvable via the L2 endpoint.
+    async def test_sea_products_resolvable(self, country: str):
+        """A sample of SEA products must be resolvable via the L2 endpoint."""
+        data = await _get_country_data(country)
 
-        PH/TH v5 product-by-ID returns 0 results, so we verify via L2
-        which is the same endpoint the enrichment path uses.
-        """
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
+        if not data.matching_deals:
+            pytest.skip(f"No deals for {country}")
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
+        sample = data.matching_deals[:5]
+        client = UniqloClient(data.config)
         try:
-            result = await checker.check()
-            if not result.matching_deals:
-                pytest.skip(f"No deals for {country}")
-            sample = result.matching_deals[:5]
             for deal in sample:
-                l2s = await checker._client.fetch_product_l2s(
+                l2s = await client.fetch_product_l2s(
                     deal.product_id, deal.price_group,
                 )
                 assert l2s, (
@@ -521,7 +494,7 @@ class TestSeaCountryPipeline:
                     f"endpoint for {country}"
                 )
         finally:
-            await checker.close()
+            await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -537,110 +510,128 @@ _COUNTRY_LANG_MAP: dict[str, str] = {
     "sg": "sg/en",
 }
 
-_SWEEP_COUNTRIES = [
-    pytest.param(cc, id=cc) for cc in _COUNTRY_CAPABILITIES
-]
-
 
 class TestCountrySweep:
-    """Verify that every registered country returns products with correct URLs.
+    """Verify every registered country returns products with correct URLs.
 
-    Iterates over the full ``_COUNTRY_CAPABILITIES`` registry and, for each
-    country:
-    - Fetches sale products via the configured listing sources.
-    - Runs the pipeline (filter + stock/L2 enrichment).
-    - Asserts that generated URLs use the correct query-param style.
-    - Re-fetches a sample product by ID to confirm resolvability.
+    All countries are fetched **concurrently** (bounded by
+    ``_SWEEP_CONCURRENCY``) to cut wall-clock time drastically.  Results
+    are cached and shared with earlier test classes (SEA, DE).
     """
 
-    @pytest.mark.parametrize("country_code", _SWEEP_COUNTRIES)
-    async def test_country_url_format_and_resolvability(
-        self, country_code: str, tmp_path,
-    ):
-        country = _COUNTRY_LANG_MAP.get(country_code)
-        if country is None:
-            pytest.skip(f"No lang mapping for {country_code}")
+    async def test_all_countries_url_format_and_resolvability(self):
+        """Concurrent sweep: fetch, validate URLs, spot-check resolvability."""
+        sem = asyncio.Semaphore(_SWEEP_CONCURRENCY)
+        errors: list[str] = []
+        skipped: list[str] = []
+        passed: list[str] = []
 
-        caps = _COUNTRY_CAPABILITIES[country_code]
+        async def _check_one(cc: str) -> None:
+            try:
+                async with sem:
+                    country = _COUNTRY_LANG_MAP.get(cc)
+                    if country is None:
+                        skipped.append(f"{cc}: no lang mapping")
+                        return
 
-        config = AppConfig.model_validate({
-            "uniqlo": {"country": country, "check_interval_minutes": 0},
-            "filters": {
-                "gender": ["men", "women"],
-                "min_sale_percentage": 0,
-            },
-            "notifications": {"notify_on": "every_check"},
-        })
+                    caps = _COUNTRY_CAPABILITIES[cc]
 
-        checker = SaleChecker(config, state_file=tmp_path / ".state.json")
-        try:
-            result = await checker.check()
-        except Exception as exc:
-            pytest.skip(f"API error for {country_code}: {exc}")
-            return
-        finally:
-            await checker.close()
+                    try:
+                        data = await _get_country_data(country)
+                    except Exception as exc:
+                        skipped.append(f"{cc}: {exc}")
+                        return
 
-        if not result.matching_deals:
-            pytest.skip(
-                f"No deals for {country_code} — API may be "
-                "rate-limiting or no sale items."
-            )
+                    if not data.matching_deals:
+                        skipped.append(f"{cc}: no deals")
+                        return
 
-        for deal in result.matching_deals[:10]:
-            for url in deal.product_urls:
-                if not url:
-                    continue
-                parsed = urlparse(url)
-                assert parsed.scheme == "https", (
-                    f"[{country_code}] URL must be HTTPS: {url}"
-                )
-                assert "uniqlo.com" in parsed.netloc, (
-                    f"[{country_code}] URL must be on uniqlo.com: {url}"
-                )
-                qs = parse_qs(parsed.query)
+                    # --- URL format ------------------------------------
+                    for deal in data.matching_deals[:10]:
+                        for url in deal.product_urls:
+                            if not url:
+                                continue
+                            parsed = urlparse(url)
+                            if parsed.scheme != "https":
+                                errors.append(
+                                    f"[{cc}] URL must be HTTPS: {url}"
+                                )
+                            if "uniqlo.com" not in parsed.netloc:
+                                errors.append(
+                                    f"[{cc}] URL not on uniqlo.com: {url}"
+                                )
+                            qs = parse_qs(parsed.query)
 
-                if caps.url_style == "code":
-                    assert "colorCode" in qs, (
-                        f"[{country_code}] Expected colorCode in {url}"
-                    )
-                    assert "sizeCode" in qs, (
-                        f"[{country_code}] Expected sizeCode in {url}"
-                    )
-                else:
-                    assert "colorDisplayCode" in qs, (
-                        f"[{country_code}] Expected colorDisplayCode "
-                        f"in {url}"
-                    )
-                    assert "sizeDisplayCode" in qs, (
-                        f"[{country_code}] Expected sizeDisplayCode "
-                        f"in {url}"
-                    )
+                            if caps.url_style == "code":
+                                if "colorCode" not in qs:
+                                    errors.append(
+                                        f"[{cc}] Expected colorCode: {url}"
+                                    )
+                                if "sizeCode" not in qs:
+                                    errors.append(
+                                        f"[{cc}] Expected sizeCode: {url}"
+                                    )
+                            else:
+                                if "colorDisplayCode" not in qs:
+                                    errors.append(
+                                        f"[{cc}] Expected colorDisplayCode:"
+                                        f" {url}"
+                                    )
+                                if "sizeDisplayCode" not in qs:
+                                    errors.append(
+                                        f"[{cc}] Expected sizeDisplayCode:"
+                                        f" {url}"
+                                    )
 
-        sample = result.matching_deals[:3]
-        client = UniqloClient(config)
-        try:
-            if caps.stock_api == "none":
-                for deal in sample:
-                    l2s = await client.fetch_product_l2s(
-                        deal.product_id, deal.price_group,
-                    )
-                    assert l2s, (
-                        f"[{country_code}] Product {deal.product_id} "
-                        f"not resolvable via L2"
-                    )
-            else:
-                ids = [d.product_id for d in sample]
-                refetched = await client.fetch_products_by_ids(ids)
-                found_ids = {p.product_id for p in refetched}
-                assert found_ids, (
-                    f"[{country_code}] fetch_products_by_ids returned "
-                    f"nothing for {ids}"
-                )
-                missing = [d.product_id for d in sample
-                           if d.product_id not in found_ids]
-                assert len(missing) < len(sample), (
-                    f"[{country_code}] None of {ids} resolvable via API"
-                )
-        finally:
-            await client.aclose()
+                    # --- Resolvability spot-check -----------------------
+                    sample = data.matching_deals[:3]
+                    client = UniqloClient(data.config)
+                    try:
+                        if caps.stock_api == "none":
+                            for deal in sample:
+                                l2s = await client.fetch_product_l2s(
+                                    deal.product_id, deal.price_group,
+                                )
+                                if not l2s:
+                                    errors.append(
+                                        f"[{cc}] {deal.product_id} not "
+                                        f"resolvable via L2"
+                                    )
+                        else:
+                            ids = [d.product_id for d in sample]
+                            refetched = (
+                                await client.fetch_products_by_ids(ids)
+                            )
+                            found_ids = {
+                                p.product_id for p in refetched
+                            }
+                            if not found_ids:
+                                errors.append(
+                                    f"[{cc}] fetch_products_by_ids "
+                                    f"returned nothing for {ids}"
+                                )
+                            missing = [
+                                d.product_id for d in sample
+                                if d.product_id not in found_ids
+                            ]
+                            if len(missing) >= len(sample):
+                                errors.append(
+                                    f"[{cc}] None of {ids} resolvable"
+                                )
+                    finally:
+                        await client.aclose()
+
+                    passed.append(cc)
+            except Exception as exc:
+                errors.append(f"[{cc}] Unexpected error: {exc}")
+
+        await asyncio.gather(
+            *(_check_one(cc) for cc in _COUNTRY_CAPABILITIES),
+        )
+
+        summary = (
+            f"Sweep: {len(passed)} passed, {len(skipped)} skipped, "
+            f"{len(errors)} error(s)"
+        )
+        if errors:
+            pytest.fail(f"{summary}\n" + "\n".join(errors))
