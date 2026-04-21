@@ -306,7 +306,7 @@ class NotificationConfig(BaseModel):
     preview_html: bool = False
     notify_on: Literal["all_then_new", "new_deals", "every_check"] = "all_then_new"
     check_on_startup: bool = True
-    low_stock_threshold: int = Field(default=5, ge=0)
+    low_stock_threshold: int = Field(default=3, ge=0)
     suppress_low_stock_alerts: bool = False
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 

@@ -974,7 +974,7 @@ _TEMPLATE = """\
       !!cfg.notifications.suppress_low_stock_alerts;
     $("low-stock-threshold").value =
       cfg.notifications.low_stock_threshold != null
-        ? cfg.notifications.low_stock_threshold : 5;
+        ? cfg.notifications.low_stock_threshold : 3;
 
     var tg = cfg.notifications.channels.telegram;
     $("telegram-enabled").checked = !!tg.enabled;

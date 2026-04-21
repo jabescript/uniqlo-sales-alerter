@@ -68,9 +68,9 @@ class TestAppConfig:
         assert cfg.uniqlo.sale_paths == ["5855", "5856"]
 
     def test_low_stock_defaults(self):
-        """Defaults preserve existing behaviour — suppression off, threshold 5."""
+        """Defaults preserve existing behaviour — suppression off, threshold 3."""
         cfg = AppConfig()
-        assert cfg.notifications.low_stock_threshold == 5
+        assert cfg.notifications.low_stock_threshold == 3
         assert cfg.notifications.suppress_low_stock_alerts is False
 
     def test_low_stock_configured(self):

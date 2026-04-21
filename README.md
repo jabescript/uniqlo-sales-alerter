@@ -388,7 +388,7 @@ When `notifications.suppress_low_stock_alerts: true`, variants currently below t
 The web UI's **Notification Triggers** section (between Schedule and General) exposes:
 
 - **Suppress Low-Stock Alerts** — toggles the `suppress_low_stock_alerts` flag described above. Off by default, so upgrades don't change existing behaviour. Turn it on when you want to stop being pinged about OOS items that restock with only a handful of units; the alert will fire again once the quantity climbs above the threshold.
-- **Low-Stock Threshold** — integer, default `5`. A variant is considered low stock when its remaining quantity is at or below this number. When positive this setting is **authoritative** — it overrides the Uniqlo API's own `LOW_STOCK` flag, so a variant the API calls "low" at 50 units won't be badged (or suppressed) if you only care about ≤5. Set to `0` to disable the numeric comparison and fall back to the API's flag as the sole signal.
+- **Low-Stock Threshold** — integer, default `3`. A variant is considered low stock when its remaining quantity is at or below this number. When positive this setting is **authoritative** — it overrides the Uniqlo API's own `LOW_STOCK` flag, so a variant the API calls "low" at 50 units won't be badged (or suppressed) if you only care about ≤3. Set to `0` to disable the numeric comparison and fall back to the API's flag as the sole signal.
 
 #### Country caveat (PH / TH)
 

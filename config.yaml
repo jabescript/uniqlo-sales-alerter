@@ -128,7 +128,7 @@ notifications:
   # When true, variants that are currently low stock are kept out
   # of the seen-set, so you only get alerted once they climb back
   # above the threshold.  Useful to avoid being pinged for an OOS
-  # item that restocks with only 2 units (when threshold is 5).
+  # item that restocks with only 2 units (when threshold is 3).
   # Low-stock sizes still appear inside existing notifications so
   # you can see the full state of a deal.
   suppress_low_stock_alerts: false

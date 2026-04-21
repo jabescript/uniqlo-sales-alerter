@@ -10,13 +10,13 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 - **Per-variant stock count in every notification** — console, email, Telegram, and the HTML report now show the exact number of units remaining next to each size chip (e.g. `M (12)`). The data comes from the v5 stock API that was already being called for in-stock filtering.
 - **Low-stock badge** — variants whose quantity is at or below a configurable threshold are marked `(3, low stock)` and styled in red in each channel. The user threshold is authoritative when positive; set it to `0` to fall back to the Uniqlo API's own `LOW_STOCK` flag as the sole signal.
-- **Opt-in low-stock alert suppression** — a new `notifications.suppress_low_stock_alerts` toggle keeps low-stock variants out of the seen-set so they don't fire an alert. The typical use case: an out-of-stock item restocks with only 2 units while your threshold is 5 — normally that would retrigger a notification, but with the toggle on it's quietly deferred until the quantity climbs back above the threshold. Low-stock sizes still appear inside other notifications so you see the full state of a deal.
+- **Opt-in low-stock alert suppression** — a new `notifications.suppress_low_stock_alerts` toggle keeps low-stock variants out of the seen-set so they don't fire an alert. The typical use case: an out-of-stock item restocks with only 2 units while your threshold is 3 — normally that would retrigger a notification, but with the toggle on it's quietly deferred until the quantity climbs back above the threshold. Low-stock sizes still appear inside other notifications so you see the full state of a deal.
 - **Product rating** — when the Uniqlo API exposes reviews, notifications now include a `★ 4.3 (127 reviews)` line below the product title.
-- **New "Notification Triggers" settings section** — sits between *Schedule* and *General* in the web UI. Contains the low-stock threshold (default 5) and the opt-in re-alert toggle (default off).
+- **New "Notification Triggers" settings section** — sits between *Schedule* and *General* in the web UI. Contains the low-stock threshold (default 3) and the opt-in re-alert toggle (default off).
 
 ### Config
 
-- New `notifications.low_stock_threshold` (int, default `5`) and `notifications.suppress_low_stock_alerts` (bool, default `false`) in `config.yaml`.
+- New `notifications.low_stock_threshold` (int, default `3`) and `notifications.suppress_low_stock_alerts` (bool, default `false`) in `config.yaml`.
 - New env vars `NOTIFY_LOW_STOCK_THRESHOLD` and `NOTIFY_SUPPRESS_LOW_STOCK_ALERTS`.
 - New fields `SaleItem.stock_quantities` and `SaleItem.stock_statuses` (parallel to `available_sizes`); safe to ignore for consumers that don't need them.
 
