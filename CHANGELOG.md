@@ -4,7 +4,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.5.0 — 2026-04-18
+## v1.5.0 — 2026-04-21
 
 ### New features
 
