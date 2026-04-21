@@ -186,7 +186,6 @@ class TestEscapeMd:
 class TestTelegramCaptionMarkdownV2:
     """Validate that _build_caption produces well-formed MarkdownV2."""
 
-    @pytest.mark.xfail(reason="Known bug — fix pending in open PR", strict=True)
     def test_strikethrough_discount_no_double_escape(self):
         """Known-discount captions must not double-escape the percentage."""
         deal = _sample_deal()
