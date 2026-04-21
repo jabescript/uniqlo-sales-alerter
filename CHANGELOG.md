@@ -29,7 +29,6 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 - New `notifications.low_stock_threshold` (int, default `3`) and `notifications.suppress_low_stock_alerts` (bool, default `false`) in `config.yaml`.
 - New env vars `NOTIFY_LOW_STOCK_THRESHOLD` and `NOTIFY_SUPPRESS_LOW_STOCK_ALERTS`.
-- New fields `SaleItem.stock_quantities` and `SaleItem.stock_statuses` (parallel to `available_sizes`); safe to ignore for consumers that don't need them.
 
 ### Improvements
 
