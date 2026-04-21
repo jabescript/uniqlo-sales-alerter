@@ -8,6 +8,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Improvements
 
+- **Redesigned size filter controls** — clothing sizes are now checkboxes instead of a free-text input. Pants and shoe sizes use a dropdown that creates removable chips, matching the watched-variants interaction pattern. The underlying config format is unchanged.
 - **Version visible in email footer and settings UI** — the email footer now reads "Sent by Uniqlo Sales Alerter v1.5.0" (version pulled from `pyproject.toml` at runtime). The settings page subtitle also shows the version (e.g. "Sales Alerter v1.5.0 — Settings").
 
 ### Bug fixes

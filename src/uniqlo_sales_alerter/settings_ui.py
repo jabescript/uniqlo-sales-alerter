@@ -185,9 +185,37 @@ _TEMPLATE = """\
   .size-grid {
     display: grid; gap: 12px; margin-top: 8px;
   }
-  .size-grid label {
+  .size-grid > div > label:first-child {
     font-weight: 500; font-size: .8rem;
     margin-bottom: 4px; display: block;
+  }
+
+  /* ── Size chips (pants / shoes) ────────────────── */
+  .size-chip-wrap {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+    min-height: 28px;
+  }
+  .size-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px;
+    border: 1.5px solid var(--uq-red);
+    border-radius: 2px;
+    color: var(--uq-red); background: transparent;
+    font-size: .78rem; font-weight: 600;
+    cursor: default; user-select: none;
+    transition: background .12s, color .12s;
+  }
+  .size-chip .chip-x {
+    cursor: pointer; margin-left: 2px;
+    font-size: .85rem; line-height: 1;
+    opacity: .7; transition: opacity .12s;
+  }
+  .size-chip .chip-x:hover { opacity: 1; }
+  .size-dropdown {
+    padding: 6px 10px; font-size: .82rem;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: var(--card-bg); color: var(--fg);
+    cursor: pointer;
   }
 
   /* ── Product list items ──────────────────────── */
@@ -538,21 +566,67 @@ _TEMPLATE = """\
         <label>Size Filters</label>
         <div class="help">
           Only show items available in at least one of these sizes.
-          Leave a field empty to skip filtering for that category.
-          Comma-separated.
+          Leave unchecked / unselected to skip filtering for that category.
         </div>
         <div class="size-grid">
           <div>
-            <label for="sizes-clothing">Clothing (XXS, XS, S, M, L, XL, XXL, 3XL)</label>
-            <input type="text" id="sizes-clothing" placeholder="e.g. S, M, L"/>
+            <label>Clothing</label>
+            <div class="checkbox-group" id="sizes-clothing-group">
+              <label><input type="checkbox" name="size-clothing" value="XXS"/> XXS</label>
+              <label><input type="checkbox" name="size-clothing" value="XS"/> XS</label>
+              <label><input type="checkbox" name="size-clothing" value="S"/> S</label>
+              <label><input type="checkbox" name="size-clothing" value="M"/> M</label>
+              <label><input type="checkbox" name="size-clothing" value="L"/> L</label>
+              <label><input type="checkbox" name="size-clothing" value="XL"/> XL</label>
+              <label><input type="checkbox" name="size-clothing" value="XXL"/> XXL</label>
+              <label><input type="checkbox" name="size-clothing" value="3XL"/> 3XL</label>
+            </div>
           </div>
           <div>
-            <label for="sizes-pants">Pants (22inch – 40inch)</label>
-            <input type="text" id="sizes-pants" placeholder="e.g. 30inch, 31inch, 32inch"/>
+            <label for="sizes-pants-select">Pants</label>
+            <select id="sizes-pants-select" class="size-dropdown">
+              <option value="">Add a size\u2026</option>
+              <option value="22inch">22inch</option>
+              <option value="23inch">23inch</option>
+              <option value="24inch">24inch</option>
+              <option value="25inch">25inch</option>
+              <option value="26inch">26inch</option>
+              <option value="27inch">27inch</option>
+              <option value="28inch">28inch</option>
+              <option value="29inch">29inch</option>
+              <option value="30inch">30inch</option>
+              <option value="31inch">31inch</option>
+              <option value="32inch">32inch</option>
+              <option value="33inch">33inch</option>
+              <option value="34inch">34inch</option>
+              <option value="35inch">35inch</option>
+              <option value="36inch">36inch</option>
+              <option value="37inch">37inch</option>
+              <option value="38inch">38inch</option>
+              <option value="39inch">39inch</option>
+              <option value="40inch">40inch</option>
+            </select>
+            <div class="size-chip-wrap" id="sizes-pants-chips"></div>
           </div>
           <div>
-            <label for="sizes-shoes">Shoes (37 – 43)</label>
-            <input type="text" id="sizes-shoes" placeholder="e.g. 42, 42.5, 43"/>
+            <label for="sizes-shoes-select">Shoes</label>
+            <select id="sizes-shoes-select" class="size-dropdown">
+              <option value="">Add a size\u2026</option>
+              <option value="37">37</option>
+              <option value="37.5">37.5</option>
+              <option value="38">38</option>
+              <option value="38.5">38.5</option>
+              <option value="39">39</option>
+              <option value="39.5">39.5</option>
+              <option value="40">40</option>
+              <option value="40.5">40.5</option>
+              <option value="41">41</option>
+              <option value="41.5">41.5</option>
+              <option value="42">42</option>
+              <option value="42.5">42.5</option>
+              <option value="43">43</option>
+            </select>
+            <div class="size-chip-wrap" id="sizes-shoes-chips"></div>
           </div>
           <div class="toggle-row" style="margin-top:4px">
             <div>
@@ -769,6 +843,45 @@ _TEMPLATE = """\
     el._tid = setTimeout(function () { el.className = "toast"; }, 4000);
   }
 
+  /* ── size chip state & helpers ────────────────── */
+  var _pantsChips = [];
+  var _shoesChips = [];
+
+  function _collectCheckboxes(name) {
+    var vals = [];
+    document.querySelectorAll('input[name="' + name + '"]:checked').forEach(function (cb) {
+      vals.push(cb.value);
+    });
+    return vals;
+  }
+
+  function _renderChips(containerId, arr) {
+    var el = $(containerId);
+    if (!arr.length) { el.innerHTML = ""; return; }
+    el.innerHTML = arr.map(function (v, i) {
+      return '<span class="size-chip">' + v +
+        '<span class="chip-x" data-idx="' + i + '">&times;</span></span>';
+    }).join("");
+  }
+
+  function _initSizeDropdown(selectId, chipsId, arr) {
+    var sel = $(selectId);
+    sel.addEventListener("change", function () {
+      var v = sel.value;
+      if (!v || arr.indexOf(v) !== -1) { sel.value = ""; return; }
+      arr.push(v);
+      _renderChips(chipsId, arr);
+      sel.value = "";
+    });
+    $(chipsId).addEventListener("click", function (e) {
+      var x = e.target.closest(".chip-x");
+      if (!x) return;
+      var idx = parseInt(x.getAttribute("data-idx"), 10);
+      arr.splice(idx, 1);
+      _renderChips(chipsId, arr);
+    });
+  }
+
   /* ── watched / ignored list state ─────────────── */
   var _watchedVariants = [];
   var _ignoredProducts = [];
@@ -961,9 +1074,14 @@ _TEMPLATE = """\
     $("min-sale").value = cfg.filters.min_sale_percentage;
 
     var sz = cfg.filters.sizes || {};
-    $("sizes-clothing").value = (sz.clothing || []).join(", ");
-    $("sizes-pants").value    = (sz.pants    || []).join(", ");
-    $("sizes-shoes").value    = (sz.shoes    || []).join(", ");
+    var clothing = (sz.clothing || []).map(function(s){return s.toUpperCase()});
+    document.querySelectorAll('input[name="size-clothing"]').forEach(function (cb) {
+      cb.checked = clothing.indexOf(cb.value) !== -1;
+    });
+    _pantsChips = (sz.pants || []).slice();
+    _renderChips("sizes-pants-chips", _pantsChips);
+    _shoesChips = (sz.shoes || []).slice();
+    _renderChips("sizes-shoes-chips", _shoesChips);
     $("sizes-one-size").checked = !!sz.one_size;
 
     renderWatchedList(cfg.filters.watched_variants || []);
@@ -1027,9 +1145,9 @@ _TEMPLATE = """\
         gender: genders,
         min_sale_percentage: parseFloat(val("min-sale")) || 0,
         sizes: {
-          clothing: splitCSV(val("sizes-clothing")),
-          pants:    splitCSV(val("sizes-pants")),
-          shoes:    splitCSV(val("sizes-shoes")),
+          clothing: _collectCheckboxes("size-clothing"),
+          pants:    _pantsChips.slice(),
+          shoes:    _shoesChips.slice(),
           one_size: checked("sizes-one-size")
         },
         watched_variants: _watchedVariants,
@@ -1077,6 +1195,8 @@ _TEMPLATE = """\
   });
 
   /* ── init ────────────────────────────────────── */
+  _initSizeDropdown("sizes-pants-select", "sizes-pants-chips", _pantsChips);
+  _initSizeDropdown("sizes-shoes-select", "sizes-shoes-chips", _shoesChips);
   populate(CONFIG);
 })();
 </script>
