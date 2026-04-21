@@ -66,12 +66,14 @@ def _size_link_html(
     stock_text, is_low = format_stock_suffix(qty, status, threshold)
     if not stock_text:
         return anchor
-    style = (
-        "color:#c0392b;font-weight:600;" if is_low
-        else "color:#999;"
-    )
+    if is_low:
+        return (
+            f'{anchor} <span style="color:#fff;background:#c0392b;'
+            f'font-weight:600;font-size:.85em;padding:1px 5px;'
+            f'border-radius:2px;">({html_mod.escape(stock_text)})</span>'
+        )
     return (
-        f'{anchor} <span style="{style}font-size:.85em;">'
+        f'{anchor} <span style="color:#999;font-size:.85em;">'
         f'({html_mod.escape(stock_text)})</span>'
     )
 
