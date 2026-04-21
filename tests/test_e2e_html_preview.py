@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
-from uniqlo_sales_alerter.config import _COUNTRY_CAPABILITIES, AppConfig
+from uniqlo_sales_alerter.config import AppConfig
 from uniqlo_sales_alerter.models.products import SaleItem
 from uniqlo_sales_alerter.notifications.html_report import (
     HtmlReportNotifier,
@@ -34,7 +34,6 @@ from uniqlo_sales_alerter.notifications.html_report import (
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 
 _E2E_TIMEOUT = 30
-_SWEEP_CONCURRENCY = 5
 
 
 def _api_reachable(country_code: str = "de", lang: str = "de") -> bool:
@@ -498,140 +497,124 @@ class TestSeaCountryPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Full country sweep — URL format and product resolvability
+# Representative country sweep — one per distinct API style
 # ---------------------------------------------------------------------------
+#
+# Each ``CountryCapabilities`` combination that produces different pipeline
+# behaviour gets exactly one representative.  Countries within the same
+# group share identical code paths; testing all 21 would only add API
+# pressure and flakiness.
+#
+#   Style                           listing_sources              stock  url     Representative
+#   ─────────────────────────────── ──────────────────────────── ────── ─────── ──────────────
+#   v5 discount only                (v5_disc,)                   v5     disp    de
+#   v5 discount + limitedOffer      (v5_disc, v5_ltd)            v5     disp    id
+#   v3 only                         (v3_disc, v3_ltd)            none   code    ph
+#   v5 + v3 mixed                   (v5_ltd, v3_disc, v3_ltd)    none   code    th
+#   v5 discount + sale_paths        (v5_disc, sale_paths)        v5     disp    sg
 
-_COUNTRY_LANG_MAP: dict[str, str] = {
-    "de": "de/de", "uk": "uk/en", "fr": "fr/fr", "es": "es/es",
-    "it": "it/it", "be": "be/fr", "nl": "nl/nl", "dk": "dk/da",
-    "se": "se/sv", "au": "au/en", "in": "in/en", "id": "id/en",
-    "vn": "vn/en", "my": "my/en", "ph": "ph/en", "th": "th/en",
-    "us": "us/en", "ca": "ca/en", "jp": "jp/ja", "kr": "kr/ko",
-    "sg": "sg/en",
+_REPRESENTATIVE_STYLES: dict[str, str] = {
+    "de/de": "v5_disc",
+    "id/en": "v5_disc+v5_ltd",
+    "ph/en": "v3_disc+v3_ltd",
+    "th/en": "v5_ltd+v3",
+    "sg/en": "v5_disc+sale_paths",
 }
+
+_REPRESENTATIVE_COUNTRIES = [
+    pytest.param(country, id=style)
+    for country, style in _REPRESENTATIVE_STYLES.items()
+]
 
 
 class TestCountrySweep:
-    """Verify every registered country returns products with correct URLs.
+    """Verify URL format and product resolvability for each API style.
 
-    All countries are fetched **concurrently** (bounded by
-    ``_SWEEP_CONCURRENCY``) to cut wall-clock time drastically.  Results
-    are cached and shared with earlier test classes (SEA, DE).
+    One representative country per distinct ``CountryCapabilities``
+    combination.  DE, PH, and TH are already cached by earlier test
+    classes, so this sweep only triggers new fetches for ID and SG.
+
+    A warmup test pre-fetches all representatives concurrently so that
+    the individual parametrized tests read from cache.
     """
 
-    async def test_all_countries_url_format_and_resolvability(self):
-        """Concurrent sweep: fetch, validate URLs, spot-check resolvability."""
-        sem = asyncio.Semaphore(_SWEEP_CONCURRENCY)
-        errors: list[str] = []
-        skipped: list[str] = []
-        passed: list[str] = []
-
-        async def _check_one(cc: str) -> None:
-            try:
-                async with sem:
-                    country = _COUNTRY_LANG_MAP.get(cc)
-                    if country is None:
-                        skipped.append(f"{cc}: no lang mapping")
-                        return
-
-                    caps = _COUNTRY_CAPABILITIES[cc]
-
-                    try:
-                        data = await _get_country_data(country)
-                    except Exception as exc:
-                        skipped.append(f"{cc}: {exc}")
-                        return
-
-                    if not data.matching_deals:
-                        skipped.append(f"{cc}: no deals")
-                        return
-
-                    # --- URL format ------------------------------------
-                    for deal in data.matching_deals[:10]:
-                        for url in deal.product_urls:
-                            if not url:
-                                continue
-                            parsed = urlparse(url)
-                            if parsed.scheme != "https":
-                                errors.append(
-                                    f"[{cc}] URL must be HTTPS: {url}"
-                                )
-                            if "uniqlo.com" not in parsed.netloc:
-                                errors.append(
-                                    f"[{cc}] URL not on uniqlo.com: {url}"
-                                )
-                            qs = parse_qs(parsed.query)
-
-                            if caps.url_style == "code":
-                                if "colorCode" not in qs:
-                                    errors.append(
-                                        f"[{cc}] Expected colorCode: {url}"
-                                    )
-                                if "sizeCode" not in qs:
-                                    errors.append(
-                                        f"[{cc}] Expected sizeCode: {url}"
-                                    )
-                            else:
-                                if "colorDisplayCode" not in qs:
-                                    errors.append(
-                                        f"[{cc}] Expected colorDisplayCode:"
-                                        f" {url}"
-                                    )
-                                if "sizeDisplayCode" not in qs:
-                                    errors.append(
-                                        f"[{cc}] Expected sizeDisplayCode:"
-                                        f" {url}"
-                                    )
-
-                    # --- Resolvability spot-check -----------------------
-                    sample = data.matching_deals[:3]
-                    client = UniqloClient(data.config)
-                    try:
-                        if caps.stock_api == "none":
-                            for deal in sample:
-                                l2s = await client.fetch_product_l2s(
-                                    deal.product_id, deal.price_group,
-                                )
-                                if not l2s:
-                                    errors.append(
-                                        f"[{cc}] {deal.product_id} not "
-                                        f"resolvable via L2"
-                                    )
-                        else:
-                            ids = [d.product_id for d in sample]
-                            refetched = (
-                                await client.fetch_products_by_ids(ids)
-                            )
-                            found_ids = {
-                                p.product_id for p in refetched
-                            }
-                            if not found_ids:
-                                errors.append(
-                                    f"[{cc}] fetch_products_by_ids "
-                                    f"returned nothing for {ids}"
-                                )
-                            missing = [
-                                d.product_id for d in sample
-                                if d.product_id not in found_ids
-                            ]
-                            if len(missing) >= len(sample):
-                                errors.append(
-                                    f"[{cc}] None of {ids} resolvable"
-                                )
-                    finally:
-                        await client.aclose()
-
-                    passed.append(cc)
-            except Exception as exc:
-                errors.append(f"[{cc}] Unexpected error: {exc}")
-
+    async def test_0_prefetch_all_styles(self):
+        """Pre-fetch all representative countries concurrently."""
         await asyncio.gather(
-            *(_check_one(cc) for cc in _COUNTRY_CAPABILITIES),
+            *(_get_country_data(c) for c in _REPRESENTATIVE_STYLES),
+            return_exceptions=True,
         )
 
-        summary = (
-            f"Sweep: {len(passed)} passed, {len(skipped)} skipped, "
-            f"{len(errors)} error(s)"
-        )
-        if errors:
-            pytest.fail(f"{summary}\n" + "\n".join(errors))
+    @pytest.mark.parametrize("country", _REPRESENTATIVE_COUNTRIES)
+    async def test_url_format_and_resolvability(self, country: str):
+        data = await _get_country_data(country)
+        caps = data.config.capabilities
+
+        if not data.matching_deals:
+            pytest.skip(f"No deals for {country}")
+
+        for deal in data.matching_deals[:10]:
+            for url in deal.product_urls:
+                if not url:
+                    continue
+                parsed = urlparse(url)
+                assert parsed.scheme == "https", (
+                    f"URL must be HTTPS: {url}"
+                )
+                assert "uniqlo.com" in parsed.netloc, (
+                    f"URL must be on uniqlo.com: {url}"
+                )
+                qs = parse_qs(parsed.query)
+
+                if caps.url_style == "code":
+                    assert "colorCode" in qs, (
+                        f"Expected colorCode in {url}"
+                    )
+                    assert "sizeCode" in qs, (
+                        f"Expected sizeCode in {url}"
+                    )
+                else:
+                    assert "colorDisplayCode" in qs, (
+                        f"Expected colorDisplayCode in {url}"
+                    )
+                    assert "sizeDisplayCode" in qs, (
+                        f"Expected sizeDisplayCode in {url}"
+                    )
+
+    @pytest.mark.parametrize("country", _REPRESENTATIVE_COUNTRIES)
+    async def test_products_resolvable(self, country: str):
+        """Spot-check that a sample of products can be re-fetched via the API."""
+        data = await _get_country_data(country)
+        caps = data.config.capabilities
+
+        if not data.matching_deals:
+            pytest.skip(f"No deals for {country}")
+
+        sample = data.matching_deals[:3]
+        client = UniqloClient(data.config)
+        try:
+            if caps.stock_api == "none":
+                for deal in sample:
+                    l2s = await client.fetch_product_l2s(
+                        deal.product_id, deal.price_group,
+                    )
+                    assert l2s, (
+                        f"Product {deal.product_id} not resolvable "
+                        f"via L2 for {country}"
+                    )
+            else:
+                ids = [d.product_id for d in sample]
+                refetched = await client.fetch_products_by_ids(ids)
+                found_ids = {p.product_id for p in refetched}
+                assert found_ids, (
+                    f"fetch_products_by_ids returned nothing for {ids}"
+                )
+                missing = [
+                    d.product_id for d in sample
+                    if d.product_id not in found_ids
+                ]
+                assert len(missing) < len(sample), (
+                    f"None of {ids} resolvable via API"
+                )
+        finally:
+            await client.aclose()
