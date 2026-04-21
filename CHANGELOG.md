@@ -6,6 +6,10 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ## v1.5.0 — 2026-04-21
 
+### Improvements
+
+- **Version visible in email footer and settings UI** — the email footer now reads "Sent by Uniqlo Sales Alerter v1.5.0" (version pulled from `pyproject.toml` at runtime). The settings page subtitle also shows the version (e.g. "Sales Alerter v1.5.0 — Settings").
+
 ### Bug fixes
 
 - **Out-of-stock items no longer trigger notifications** — stock verification now uses the `CountryCapabilities.stock_api` mapping to decide behaviour per country. Countries with reliable stock data (`stock_api="v5"`) properly drop items when all sizes are out of stock. Countries with unreliable stock data (`stock_api="none"`, i.e. PH/TH) skip the stock call but still fetch L2 variant data to build accurate product URLs — items are never dropped for these countries.

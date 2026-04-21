@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import TYPE_CHECKING
 
+from uniqlo_sales_alerter import __version__
 from uniqlo_sales_alerter.models.products import SaleItem
 from uniqlo_sales_alerter.notifications.base import (
     PROJECT_URL,
@@ -194,7 +195,7 @@ def _build_html(
     </table>
     <p style="color:#999;font-size:12px;">
         Sent by <a href="{PROJECT_URL}"
-        style="color:#999;">Uniqlo Sales Alerter</a>{settings_link}
+        style="color:#999;">Uniqlo Sales Alerter</a> v{__version__}{settings_link}
     </p>
     </body></html>
     """

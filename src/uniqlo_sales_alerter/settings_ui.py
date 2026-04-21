@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from uniqlo_sales_alerter import __version__
 from uniqlo_sales_alerter.notifications.base import FAVICON_LINK
 
 
 def build_settings_page(config_data: dict[str, Any]) -> str:
     """Return a self-contained HTML settings page with *config_data* pre-populated."""
     config_json = json.dumps(config_data, indent=2).replace("</", "<\\/")
-    return _TEMPLATE.replace("__CONFIG_JSON__", config_json)
+    return _TEMPLATE.replace("__VERSION__", __version__).replace("__CONFIG_JSON__", config_json)
 
 
 _TEMPLATE = """\
@@ -297,7 +298,7 @@ _TEMPLATE = """\
 
 <header>
   <div class="logo">UNIQLO</div>
-  <div class="subtitle">Sales Alerter &mdash; Settings</div>
+  <div class="subtitle">Sales Alerter v__VERSION__ &mdash; Settings</div>
 </header>
 
 <main>
