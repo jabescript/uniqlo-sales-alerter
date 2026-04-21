@@ -153,8 +153,13 @@ def resolve_color_image(
     3. Return *fallback* (typically the listing's first/representative image).
     """
     if color_images and url:
+        import re
+
         params = parse_qs(urlparse(url).query)
         color_code = params.get("colorDisplayCode", [""])[0]
+        if not color_code:
+            raw = params.get("colorCode", [""])[0]
+            color_code = re.sub(r"^[A-Z]+", "", raw)
         if color_code:
             if color_code in color_images:
                 return color_images[color_code]

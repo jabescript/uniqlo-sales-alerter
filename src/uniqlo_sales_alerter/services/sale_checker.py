@@ -113,12 +113,17 @@ class SaleChecker:
     def _variant_keys(self, item: SaleItem) -> set[str]:
         """Extract ``product_id:color:size:discount`` keys from a SaleItem.
 
-        Each URL contains ``colorDisplayCode`` and ``sizeDisplayCode`` query
-        parameters that uniquely identify a purchasable variant.  The discount
-        percentage is appended so that a price change on an existing variant is
-        detected as a new deal.  For items without a known discount (some
-        countries don't expose the original price), the literal ``"sale"`` is
-        used instead so size/color changes still trigger notifications.
+        Each URL contains colour and size query parameters that uniquely
+        identify a purchasable variant.  Both URL styles are handled:
+        ``colorDisplayCode``/``sizeDisplayCode`` and ``colorCode``/
+        ``sizeCode``.  For the latter the alphabetic prefix is stripped so
+        keys remain comparable across styles.
+
+        The discount percentage is appended so that a price change on an
+        existing variant is detected as a new deal.  For items without a
+        known discount (some countries don't expose the original price),
+        the literal ``"sale"`` is used instead so size/color changes still
+        trigger notifications.
 
         When :pyattr:`NotificationConfig.suppress_low_stock_alerts` is
         ``True`` any variant currently in low-stock state is **omitted**
@@ -129,6 +134,8 @@ class SaleChecker:
 
         Falls back to ``product_id:suffix`` when no URL parameters are available.
         """
+        import re
+
         cfg = self._config.notifications
         suffix = f"{item.discount_percentage:g}" if item.has_known_discount else "sale"
         suppress_low = cfg.suppress_low_stock_alerts
@@ -139,8 +146,17 @@ class SaleChecker:
         for idx, url in enumerate(item.product_urls):
             parsed = urlparse(url)
             params = parse_qs(parsed.query)
+
             color = params.get("colorDisplayCode", [""])[0]
             size = params.get("sizeDisplayCode", [""])[0]
+
+            if not color:
+                raw = params.get("colorCode", [""])[0]
+                color = re.sub(r"^[A-Z]+", "", raw)
+            if not size:
+                raw = params.get("sizeCode", [""])[0]
+                size = re.sub(r"^[A-Z]+", "", raw)
+
             if not (color and size):
                 continue
             saw_variant_url = True
@@ -407,15 +423,27 @@ class SaleChecker:
     ) -> list[str]:
         """Build a direct URL for each matching size variant.
 
-        Format: ``…/products/{id}/{priceGroup}?colorDisplayCode=…&sizeDisplayCode=…``
-
         Uses the representative color as a preliminary default; the real
-        in-stock colour is resolved later by ``_verify_stock``.
+        in-stock colour is resolved later by ``_verify_stock``.  The URL
+        query parameter style is determined by ``url_style`` in the
+        country's capabilities.
         """
         base = self._config.product_page_base
         pid = product.product_id
         pg = product.price_group
+        style = self._config.capabilities.url_style
         color = product.representative_color_display_code
+
+        if style == "code":
+            colors = product.representative.get("color", {})
+            color_code = colors.get("code", "")
+            return [
+                build_product_url(
+                    base, pid, pg, color_code, s.code, url_style="code",
+                )
+                for s in sizes
+            ]
+
         return [
             build_product_url(base, pid, pg, color, s.display_code)
             for s in sizes
@@ -431,13 +459,21 @@ class SaleChecker:
         For every matching size, pick a colour that is actually in stock and
         rewrite the variant URL accordingly.  Items where no sizes survive
         are dropped entirely.
+
+        Countries whose ``stock_api`` capability is ``"none"`` (e.g. PH, TH)
+        skip the stock call but still fetch L2 variant data to build accurate
+        product URLs.  Items are never dropped for these countries.
         """
         if not items:
             return items
+
+        unreliable_stock = self._config.capabilities.stock_api == "none"
         sem = asyncio.Semaphore(_MAX_STOCK_CONCURRENCY)
 
         async def _limited(item: SaleItem) -> SaleItem | None:
             async with sem:
+                if unreliable_stock:
+                    return await self._enrich_from_l2(item)
                 return await self._verify_one(item)
 
         tasks = [_limited(item) for item in items]
@@ -469,6 +505,7 @@ class SaleChecker:
 
         wanted = {s.upper() for s in item.available_sizes}
         base = self._config.product_page_base
+        style = self._config.capabilities.url_style
 
         # Build a size-name → preferred-color map from watched variants.
         watched = self._watched_by_product.get(item.product_id.upper(), [])
@@ -498,29 +535,27 @@ class SaleChecker:
                 preferred_color=preferred_colors.get(size_name.upper()),
             )
             if best is not None:
-                color_dc, size_dc, color_name, qty, status = best
+                color_dc, size_dc, color_name, qty, status, color_code, size_code = best
                 verified_sizes.append(size_name)
                 verified_color_names.append(color_name)
                 verified_quantities.append(qty)
                 verified_statuses.append(status)
-                verified_urls.append(
-                    build_product_url(base, item.product_id, item.price_group, color_dc, size_dc)
-                )
+                if style == "code":
+                    verified_urls.append(
+                        build_product_url(
+                            base, item.product_id, item.price_group,
+                            color_code, size_code, url_style="code",
+                        ),
+                    )
+                else:
+                    verified_urls.append(
+                        build_product_url(
+                            base, item.product_id, item.price_group,
+                            color_dc, size_dc,
+                        ),
+                    )
 
         if not verified_sizes:
-            all_oos = stock_map and all(
-                v.get("statusCode") == _STOCK_OUT
-                for v in stock_map.values()
-                if isinstance(v, dict)
-            )
-            if all_oos and l2s:
-                logger.debug(
-                    "Stock API reports 100%% OOS for %s — using L2 data "
-                    "for URLs without stock filtering", item.product_id,
-                )
-                return self._rebuild_from_l2(item, l2s, base)
-            if all_oos:
-                return item
             return None
 
         return item.model_copy(update={
@@ -531,14 +566,37 @@ class SaleChecker:
             "stock_statuses": verified_statuses,
         })
 
+    async def _enrich_from_l2(self, item: SaleItem) -> SaleItem:
+        """Enrich URLs from L2 variant data without stock filtering.
+
+        Used for countries with unreliable stock APIs (``stock_api="none"``).
+        The v5 product-detail endpoint still provides accurate variant
+        data (colours, size codes) even when the stock endpoint does not.
+        """
+        l2s = await self._client.fetch_product_l2s(
+            item.product_id, item.price_group,
+        )
+        if not l2s:
+            return item
+        return self._rebuild_from_l2(
+            item, l2s, self._config.product_page_base,
+            url_style=self._config.capabilities.url_style,
+        )
+
     @staticmethod
     def _rebuild_from_l2(
-        item: SaleItem, l2s: list[dict], base: str,
+        item: SaleItem,
+        l2s: list[dict],
+        base: str,
+        *,
+        url_style: str = "display_code",
     ) -> SaleItem:
         """Rebuild URLs and color names from L2 data without stock filtering.
 
-        Used when the stock API is unreliable (100% OOS) but L2 variant
-        data is available.  Picks the first colour variant per wanted size.
+        Picks the first colour variant per wanted size.  Stock data is
+        genuinely unknown in this path — filled with zeros / empty strings
+        so downstream code can't mistake an absent figure for a real
+        low-stock signal.
         """
         l2_by_size: dict[str, dict] = {}
         for l2 in l2s:
@@ -553,12 +611,19 @@ class SaleChecker:
             l2 = l2_by_size.get(size_name.upper())
             if l2:
                 color_obj = l2.get("color", {})
-                color_dc = color_obj.get("displayCode", "")
                 color_name = color_obj.get("name", "")
-                size_dc = l2.get("size", {}).get("displayCode", "")
+                if url_style == "code":
+                    c_val = color_obj.get("code", "")
+                    s_val = l2.get("size", {}).get("code", "")
+                else:
+                    c_val = color_obj.get("displayCode", "")
+                    s_val = l2.get("size", {}).get("displayCode", "")
                 rebuilt_sizes.append(size_name)
                 rebuilt_urls.append(
-                    build_product_url(base, item.product_id, item.price_group, color_dc, size_dc)
+                    build_product_url(
+                        base, item.product_id, item.price_group,
+                        c_val, s_val, url_style=url_style,
+                    ),
                 )
                 rebuilt_colors.append(color_name)
             else:
@@ -566,9 +631,6 @@ class SaleChecker:
                 rebuilt_urls.append("")
                 rebuilt_colors.append("")
 
-        # Stock data is genuinely unknown in this fallback path — fill with
-        # zeros / empty strings so downstream code can't mistake an absent
-        # figure for a real low-stock signal.
         return item.model_copy(update={
             "available_sizes": rebuilt_sizes,
             "product_urls": rebuilt_urls,
@@ -584,15 +646,16 @@ class SaleChecker:
         stock_map: dict[str, dict],
         wanted_sizes: set[str],
         preferred_color: str | None = None,
-    ) -> tuple[str, str, str, int, str] | None:
+    ) -> tuple[str, str, str, int, str, str, str] | None:
         """Find an in-stock colour for *size_name*.
 
         Returns ``(colorDisplayCode, sizeDisplayCode, colorName, quantity,
-        statusCode)`` or *None*.  When *preferred_color* is given (from a
-        watched URL) and that colour is in stock, it wins regardless of
-        quantity.  Otherwise the highest-quantity variant is chosen.
+        statusCode, colorCode, sizeCode)`` or *None*.  When
+        *preferred_color* is given (from a watched URL) and that colour is
+        in stock, it wins regardless of quantity.  Otherwise the
+        highest-quantity variant is chosen.
         """
-        candidates: list[tuple[int, str, str, str, str]] = []
+        candidates: list[tuple[int, str, str, str, str, str, str]] = []
         for l2 in l2s:
             sz = l2.get("size", {})
             if sz.get("name", "").upper() != size_name.upper():
@@ -606,16 +669,21 @@ class SaleChecker:
                 color_dc = color_obj.get("displayCode", "")
                 color_name = color_obj.get("name", "")
                 size_dc = sz.get("displayCode", "")
-                candidates.append((qty, color_dc, size_dc, color_name, status))
+                color_code = color_obj.get("code", "")
+                size_code = sz.get("code", "")
+                candidates.append(
+                    (qty, color_dc, size_dc, color_name, status,
+                     color_code, size_code),
+                )
 
         if not candidates:
             return None
 
         if preferred_color:
-            for qty, color_dc, size_dc, color_name, status in candidates:
+            for qty, color_dc, size_dc, color_name, status, color_code, size_code in candidates:
                 if color_dc == preferred_color:
-                    return color_dc, size_dc, color_name, qty, status
+                    return color_dc, size_dc, color_name, qty, status, color_code, size_code
 
         candidates.sort(reverse=True)  # highest quantity first
-        qty, color_dc, size_dc, color_name, status = candidates[0]
-        return color_dc, size_dc, color_name, qty, status
+        qty, color_dc, size_dc, color_name, status, color_code, size_code = candidates[0]
+        return color_dc, size_dc, color_name, qty, status, color_code, size_code

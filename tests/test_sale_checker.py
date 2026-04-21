@@ -286,8 +286,16 @@ def _make_l2(size_name: str, size_dc: str, color_name: str, color_dc: str, l2id:
     """Helper to build a minimal L2 variant dict."""
     return {
         "l2Id": l2id,
-        "size": {"name": size_name, "displayCode": size_dc},
-        "color": {"name": color_name, "displayCode": color_dc},
+        "size": {
+            "name": size_name,
+            "displayCode": size_dc,
+            "code": f"SMA{size_dc}",
+        },
+        "color": {
+            "name": color_name,
+            "displayCode": color_dc,
+            "code": f"COL{color_dc}",
+        },
     }
 
 
@@ -304,7 +312,7 @@ class TestStockVerification:
             "A2": {"statusCode": "IN_STOCK", "quantity": 50},
         }
         result = SaleChecker._pick_in_stock_variant("M", l2s, stock, {"M"})
-        assert result == ("64", "004", "BLUE", 50, "IN_STOCK")
+        assert result == ("64", "004", "BLUE", 50, "IN_STOCK", "COL64", "SMA004")
 
     def test_returns_none_when_all_out_of_stock(self):
         l2s = [_make_l2("M", "004", "RED", "15", "A1")]
@@ -337,7 +345,7 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("15", "004", "RED", 5, "IN_STOCK")
+        assert result == ("15", "004", "RED", 5, "IN_STOCK", "COL15", "SMA004")
 
     def test_preferred_color_falls_back_when_oos(self):
         """If the preferred color is out of stock, fall back to highest quantity."""
@@ -352,7 +360,7 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("64", "004", "BLUE", 50, "IN_STOCK")
+        assert result == ("64", "004", "BLUE", 50, "IN_STOCK", "COL64", "SMA004")
 
     @pytest.mark.asyncio
     async def test_verify_stock_drops_oos_sizes(self, sale_config: AppConfig):
@@ -390,11 +398,10 @@ class TestStockVerification:
         assert result[0].stock_statuses == ["IN_STOCK"]
 
     @pytest.mark.asyncio
-    async def test_verify_stock_keeps_item_when_all_oos(
-        self, sale_config: AppConfig
+    async def test_verify_stock_drops_item_when_all_oos(
+        self, sale_config: AppConfig,
     ):
-        """When stock reports 100% OOS the data is treated as unreliable
-        (e.g. v3-sourced PH/TH products) and the item is kept."""
+        """When a reliable stock API reports 100% OOS the item is dropped."""
         checker = SaleChecker(sale_config)
         item = sample_deal(
             product_id="E001", discount_percentage=60,
@@ -414,8 +421,45 @@ class TestStockVerification:
         ):
             result = await checker._verify_stock([item])
 
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_verify_stock_enriches_urls_for_unreliable_stock_api(self):
+        """Countries with stock_api='none' fetch L2 for URLs but skip stock."""
+        config = AppConfig.model_validate({
+            "uniqlo": {"country": "ph/en"},
+            "filters": {"gender": ["men"], "min_sale_percentage": 40},
+        })
+        assert config.capabilities.stock_api == "none"
+        assert config.capabilities.url_style == "code"
+        checker = SaleChecker(config)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=["url_m"], price_group="00",
+        )
+        l2s = [_make_l2("M", "004", "RED", "15", "A1")]
+        with (
+            patch.object(
+                checker._client, "fetch_product_l2s",
+                new_callable=AsyncMock, return_value=l2s,
+            ) as mock_l2,
+            patch.object(
+                checker._client, "fetch_variant_stock",
+                new_callable=AsyncMock,
+            ) as mock_stock,
+        ):
+            result = await checker._verify_stock([item])
+
+        mock_l2.assert_awaited_once()
+        mock_stock.assert_not_awaited()
         assert len(result) == 1
         assert result[0].available_sizes == ["M"]
+        assert "colorCode=COL15" in result[0].product_urls[0]
+        assert "sizeCode=SMA004" in result[0].product_urls[0]
+        assert "/00?" not in result[0].product_urls[0]
+        assert result[0].color_names == ["RED"]
+        assert result[0].stock_quantities == [0]
+        assert result[0].stock_statuses == [""]
 
     @pytest.mark.asyncio
     async def test_verify_stock_drops_partial_oos(

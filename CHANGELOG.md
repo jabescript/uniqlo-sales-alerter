@@ -6,6 +6,12 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ## v1.5.0 — 2026-04-21
 
+### Bug fixes
+
+- **Out-of-stock items no longer trigger notifications** — stock verification now uses the `CountryCapabilities.stock_api` mapping to decide behaviour per country. Countries with reliable stock data (`stock_api="v5"`) properly drop items when all sizes are out of stock. Countries with unreliable stock data (`stock_api="none"`, i.e. PH/TH) skip the stock call but still fetch L2 variant data to build accurate product URLs — items are never dropped for these countries.
+- **PH/TH product URLs fixed** — Philippines and Thailand storefronts use a different URL format (`colorCode`/`sizeCode` without a price-group path segment). A new `url_style` capability drives `build_product_url` so each country gets the correct format. URL parsing (`parse_uniqlo_url`, variant keys, settings UI) now handles both formats.
+- **PH missing sale items** — added `v3_ltd` (limitedOffer) to PH's `listing_sources` so the full sale catalogue is retrieved, not just the `discount` flagged items.
+
 ### New features
 
 - **Per-variant stock count in every notification** — console, email, Telegram, and the HTML report now show the exact number of units remaining next to each size chip (e.g. `M (12)`). The data comes from the v5 stock API that was already being called for in-stock filtering.
@@ -22,6 +28,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Improvements
 
+- **HTML report: inline stock counts** — stock counts now render inside the size chip as subtle secondary text instead of as a separate badge. Low-stock chips get a filled red background so they stand out without extra visual clutter.
 - **Quieter INFO logs** — demoted 16 verbose or redundant log lines to DEBUG across config, dispatcher, email, sale checker, and Uniqlo client. A typical sale-check cycle now produces ~3 INFO lines (fetch summary, result, delivery) instead of ~10. Internal details like notifier registration, state file loading, quiet-hour skips, and per-endpoint pagination totals are still available at DEBUG level. APScheduler's per-job "executed successfully" messages are also suppressed.
 - **Settings UI log timing** — the "Settings UI: ..." message now appears at the end of lifespan startup (right before uvicorn starts serving) instead of before `uvicorn.run()` begins.
 - **Favicon** — the settings UI and HTML report pages now show an inline SVG price-tag icon in the browser tab.

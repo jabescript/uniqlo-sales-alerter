@@ -47,13 +47,28 @@ def build_product_url(
     price_group: str,
     color: str = "",
     size: str = "",
+    *,
+    url_style: str = "display_code",
 ) -> str:
     """Reconstruct a Uniqlo product page URL from component fields.
 
     ``base`` is :pyattr:`AppConfig.product_page_base` (e.g.
     ``https://www.uniqlo.com/de/de/products``).
+
+    When *url_style* is ``"code"``, *color* and *size* are full API code
+    values (e.g. ``COL09``, ``SMA003``) and the price group is omitted
+    from the path.  Otherwise they are display codes (``09``, ``003``)
+    and ``/{price_group}`` is appended.
     """
     params: list[str] = []
+    if url_style == "code":
+        if color:
+            params.append(f"colorCode={color}")
+        if size:
+            params.append(f"sizeCode={size}")
+        qs = ("?" + "&".join(params)) if params else ""
+        return f"{base}/{product_id}{qs}"
+
     if color:
         params.append(f"colorDisplayCode={color}")
     if size:
@@ -88,9 +103,16 @@ class UniqloPriceInfo(BaseModel):
 
 
 class UniqloSize(BaseModel):
-    """A single size option with its API display code."""
+    """A single size option with its API codes.
+
+    ``code`` is the full API code (e.g. ``SMA003``, ``INS027``, ``KAG140``)
+    used in ``colorCode``/``sizeCode`` URL params for v3-storefront countries.
+    ``display_code`` is the shorter numeric portion (e.g. ``003``, ``027``)
+    used in ``colorDisplayCode``/``sizeDisplayCode`` URL params.
+    """
 
     name: str
+    code: str = ""
     display_code: str = Field(default="", alias="displayCode")
 
 

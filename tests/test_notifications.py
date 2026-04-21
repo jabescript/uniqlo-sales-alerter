@@ -805,13 +805,14 @@ class TestStockCountDisplay:
     def test_html_report_low_class_applied(self):
         deal = _stock_deal([20, 15, 2])
         html = _build_report([deal], _REPORT_TS, low_stock_threshold=5)
-        assert '<span class="size-stock low">' in html
+        assert "low-stock" in html
+        assert '<span class="stock-qty">' in html
 
     def test_html_report_non_low_uses_plain_class(self):
         deal = _stock_deal([20, 15, 8])
         html = _build_report([deal], _REPORT_TS, low_stock_threshold=5)
-        assert '<span class="size-stock">' in html
-        assert '<span class="size-stock low">' not in html
+        assert '<span class="stock-qty">' in html
+        assert 'class="size-chip low-stock"' not in html
 
 
 class TestRatingDisplay:

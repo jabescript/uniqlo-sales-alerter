@@ -72,6 +72,16 @@ def _normalize_v3_product(raw: dict[str, Any]) -> dict[str, Any]:
         product.setdefault("priceGroup", display_code.lstrip("0") or "00")
     product.setdefault("priceGroup", "00")
 
+    # Representative color: v3 has it nested under representative.color
+    if "representativeColorDisplayCode" not in product:
+        rep_color = (
+            product.get("representative", {})
+            .get("color", {})
+            .get("displayCode", "")
+        )
+        if rep_color:
+            product["representativeColorDisplayCode"] = rep_color
+
     # Images: v3 main is a list of {url, colorCode}; v5 is {colorCode: {image: url}}
     images = product.get("images", {})
     main_list = images.get("main")

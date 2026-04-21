@@ -392,7 +392,7 @@ The web UI's **Notification Triggers** section (between Schedule and General) ex
 
 #### Country caveat (PH / TH)
 
-Thailand and Philippines use Uniqlo's v3 API, whose stock endpoint reports 100% out-of-stock even when items are clearly available. The checker falls back to L2 data without stock filtering for these countries — meaning OOS, restock, and low-stock transitions aren't detected, and the low-stock suppression toggle has no effect. Discount / size changes still trigger normally.
+Thailand and Philippines use Uniqlo's v3 API, whose v5 stock endpoint reports 100% out-of-stock even when items are clearly available. The stock call is skipped for these countries, but L2 variant data is still fetched to build accurate product URLs. Their storefronts also use a different URL format (`?colorCode=COL09&sizeCode=SMA003` instead of the v5-style `colorDisplayCode`/`sizeDisplayCode`), which the alerter handles automatically via `CountryCapabilities.url_style`. OOS, restock, and low-stock transitions aren't detected, and the low-stock suppression toggle has no effect. Discount / size changes still trigger normally.
 
 ## Deployment
 

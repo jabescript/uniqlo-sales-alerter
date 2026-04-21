@@ -20,7 +20,16 @@ alwaysApply: true
   - `has_known_discount=False` -- "Sale" label (limited countries, unknown discount)
   - `has_known_discount=True` and `discount_percentage == 0` -- just the price, no label
 - **`has_known_discount`** is determined by whether the item came from the sale feed (`in_sale_feed`), not by the `promo` field.
-- **Stock verification**: When the v5 stock API reports 100% `STOCK_OUT`, use L2 data for URLs but skip stock filtering. This handles PH/TH where v5 stock is unreliable.
+- **Stock verification**: Controlled by `CountryCapabilities.stock_api`. Countries with `stock_api="v5"` trust the stock data — items where all sizes are OOS are dropped. Countries with `stock_api="none"` (PH, TH) skip the stock call but still fetch L2 variant data for accurate product URLs; items are never dropped.
+- **Product URL style**: Controlled by `CountryCapabilities.url_style`. Countries with `url_style="display_code"` (default) use `/{priceGroup}?colorDisplayCode=XX&sizeDisplayCode=YYY`. Countries with `url_style="code"` (PH, TH) use `?colorCode=COLXX&sizeCode=SMAYYY` without a price-group path segment. `build_product_url` handles both.
+
+## Validation for API and filtering changes
+
+- When any code in `src/` is modified that touches **data retrieval** (`clients/uniqlo.py`, `fetch_sale_products`, `_fetch_page`, `_fetch_page_v3`, `_normalize_v3_product`), **stock verification** (`_verify_stock`, `_verify_one`, `_enrich_from_l2`, `_rebuild_from_l2`), **filtering** (`_apply_filters`, `_matching_sizes`, `CountryCapabilities`, `listing_sources`), or **URL construction** (`build_product_url`, `_build_variant_urls`), you **must** also run the e2e country sweep before finishing:
+
+    python -m pytest tests/test_e2e_html_preview.py -m e2e -v --tb=short
+
+- Fix any failures. These tests verify that every registered country returns real products, that PH/TH product counts are not silently truncated, and that generated product URLs use the correct format and point at resolvable products.
 
 ## Config and settings
 

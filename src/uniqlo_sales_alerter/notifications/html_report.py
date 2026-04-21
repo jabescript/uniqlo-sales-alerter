@@ -146,9 +146,10 @@ _REPORT_CSS = """\
   /* ── Size chips ─────────────────────────────────── */
   .sizes {
     display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto;
+    align-items: center;
   }
   .size-chip {
-    display: inline-block;
+    display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 12px;
     border: 1.5px solid var(--uq-red);
     border-radius: 2px;
@@ -160,6 +161,18 @@ _REPORT_CSS = """\
   .size-chip:hover {
     background: var(--uq-red); color: #fff;
   }
+  .size-chip .stock-qty {
+    font-size: .65rem; font-weight: 600;
+    opacity: .55;
+  }
+  .size-chip:hover .stock-qty { opacity: .85; }
+  .size-chip.low-stock {
+    border-color: var(--uq-red);
+    background: var(--uq-red); color: #fff;
+  }
+  .size-chip.low-stock .stock-qty {
+    opacity: .85;
+  }
 
   /* ── Watch chip (per-size star) ───────────────── */
   .watch-chip {
@@ -170,18 +183,6 @@ _REPORT_CSS = """\
     transition: color .12s;
   }
   .watch-chip:hover { color: var(--uq-red); }
-
-  /* ── Stock badge (per-size count) ───────────── */
-  .size-stock {
-    display: inline-block; margin-left: 4px;
-    padding: 1px 6px; font-size: .68rem; font-weight: 700;
-    border-radius: 2px; vertical-align: middle;
-    color: var(--muted); background: var(--border);
-  }
-  .size-stock.low {
-    color: #fff; background: var(--uq-red);
-    text-transform: uppercase; letter-spacing: .04em;
-  }
 
   /* ── Rating ─────────────────────────────────── */
   .rating {
@@ -217,16 +218,15 @@ _REPORT_CSS = """\
   footer span { color: var(--uq-red); font-weight: 700; }"""
 
 
-def _stock_badge_html(qty: int, status: str, threshold: int) -> str:
-    """Render a <span class='size-stock'> badge next to a size chip.
+def _stock_inline_html(qty: int, status: str, threshold: int) -> tuple[str, bool]:
+    """Return ``(inner_html, is_low)`` for a stock count inside a size chip.
 
-    Returns an empty string when stock data is unknown so chips stay clean.
+    ``inner_html`` is empty when stock data is unavailable so chips stay clean.
     """
     stock_text, is_low = format_stock_suffix(qty, status, threshold)
     if not stock_text:
-        return ""
-    cls = "size-stock low" if is_low else "size-stock"
-    return f'<span class="{cls}">{html_mod.escape(stock_text)}</span>'
+        return "", False
+    return f'<span class="stock-qty">{html_mod.escape(stock_text)}</span>', is_low
 
 
 def _render_card(
@@ -258,16 +258,17 @@ def _render_card(
     qtys = deal.stock_quantities
     statuses = deal.stock_statuses
 
-    def _stock_badge(i: int) -> str:
+    def _size_chip(sz: str, url: str, i: int) -> str:
         qty = qtys[i] if i < len(qtys) else 0
         status = statuses[i] if i < len(statuses) else ""
-        return _stock_badge_html(qty, status, low_stock_threshold)
+        stock_span, is_low = _stock_inline_html(qty, status, low_stock_threshold)
+        cls = "size-chip low-stock" if is_low else "size-chip"
+        return f'<a class="{cls}" href="{url}" target="_blank">{sz}{stock_span}</a>'
 
     actions = DealActions(deal, server_url)
     if actions.unwatch_url:
         size_parts = [
-            f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
-            f'{_stock_badge(i)}'
+            _size_chip(sz, url, i)
             for i, (sz, url) in enumerate(
                 zip(deal.available_sizes, deal.product_urls),
             )
@@ -278,8 +279,7 @@ def _render_card(
         for i, (sz, url) in enumerate(
             zip(deal.available_sizes, deal.product_urls),
         ):
-            chip = f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
-            chip += _stock_badge(i)
+            chip = _size_chip(sz, url, i)
             wurl = watch_map.get(sz)
             if wurl:
                 chip += (

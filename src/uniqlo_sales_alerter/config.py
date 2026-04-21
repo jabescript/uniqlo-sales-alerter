@@ -187,8 +187,19 @@ class SizeFilters(BaseModel):
 
 
 def parse_uniqlo_url(url: str) -> dict[str, str]:
-    """Extract product fields from a Uniqlo product URL."""
+    """Extract product fields from a Uniqlo product URL.
+
+    Handles both URL styles:
+    * ``display_code``: ``…/{id}/{priceGroup}?colorDisplayCode=XX&sizeDisplayCode=YYY``
+    * ``code``:         ``…/{id}?colorCode=COLXX&sizeCode=SMAYYY``
+
+    For the ``code`` style, the ``COL``/``SMA``/``INS``/… prefix is
+    stripped so that the returned ``color``/``size`` values are always the
+    short display-code form used internally.
+    """
+    import re
     from urllib.parse import parse_qs, urlparse
+
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     pid = pg = ""
@@ -199,11 +210,22 @@ def parse_uniqlo_url(url: str) -> dict[str, str]:
                 pg = parts[i + 2]
             break
     params = parse_qs(parsed.query)
+
+    color = params.get("colorDisplayCode", [""])[0]
+    size = params.get("sizeDisplayCode", [""])[0]
+
+    if not color:
+        raw = params.get("colorCode", [""])[0]
+        color = re.sub(r"^[A-Z]+", "", raw)
+    if not size:
+        raw = params.get("sizeCode", [""])[0]
+        size = re.sub(r"^[A-Z]+", "", raw)
+
     return {
         "id": pid,
         "price_group": pg or "00",
-        "color": params.get("colorDisplayCode", [""])[0],
-        "size": params.get("sizeDisplayCode", [""])[0],
+        "color": color,
+        "size": size,
     }
 
 
@@ -344,10 +366,17 @@ class CountryCapabilities:
                           (v5 stock returns all-OOS; keep listing data).
     ``is_limited``      — ``True`` when the API does not expose original
                           prices (discount % unavailable).
+    ``url_style``       — ``"display_code"`` (default) uses query params
+                          ``colorDisplayCode``/``sizeDisplayCode`` with
+                          ``/{priceGroup}`` in the path.
+                          ``"code"`` uses ``colorCode``/``sizeCode`` (the
+                          full API ``code`` values like ``COL09``,
+                          ``SMA003``) without a price-group path segment.
     """
     listing_sources: tuple[str, ...] = ("v5_disc",)
     stock_api: str = "v5"
     is_limited: bool = False
+    url_style: str = "display_code"
 
 
 _COUNTRY_CAPABILITIES: dict[str, CountryCapabilities] = {
@@ -367,12 +396,14 @@ _COUNTRY_CAPABILITIES: dict[str, CountryCapabilities] = {
     "id": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
     "vn": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
     "my": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
-    # SEA v3 stores — stock API unreliable
+    # SEA v3 stores — stock API unreliable, storefront uses code-style URLs
     "ph": CountryCapabilities(
-        listing_sources=("v3_disc",), stock_api="none",
+        listing_sources=("v3_disc", "v3_ltd"), stock_api="none",
+        url_style="code",
     ),
     "th": CountryCapabilities(
         listing_sources=("v5_ltd", "v3_disc", "v3_ltd"), stock_api="none",
+        url_style="code",
     ),
     # Limited-support countries — no discount %
     "us": CountryCapabilities(

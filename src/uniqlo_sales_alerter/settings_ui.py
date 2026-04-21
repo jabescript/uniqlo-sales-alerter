@@ -899,14 +899,24 @@ _TEMPLATE = """\
         return;
       }
       _verifyAndAdd(parsed.pid, function(data) {
+        var color = parsed.params.get("colorDisplayCode") || "";
+        if (!color) {
+          var raw_c = parsed.params.get("colorCode") || "";
+          color = raw_c.replace(/^[A-Z]+/, "");
+        }
+        var size = parsed.params.get("sizeDisplayCode") || "";
+        if (!size) {
+          var raw_s = parsed.params.get("sizeCode") || "";
+          size = raw_s.replace(/^[A-Z]+/, "");
+        }
         _watchedVariants.push({
           url: raw,
           id: parsed.pid,
           price_group: parsed.pg,
           name: data.name || "",
-          color: parsed.params.get("colorDisplayCode") || "",
+          color: color,
           color_name: "",
-          size: parsed.params.get("sizeDisplayCode") || "",
+          size: size,
           size_name: ""
         });
         renderWatchedList(_watchedVariants);
