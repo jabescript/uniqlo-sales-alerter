@@ -14,6 +14,8 @@ from uniqlo_sales_alerter.notifications.base import (
     PROJECT_URL,
     DealActions,
     format_price,
+    format_rating,
+    format_stock_suffix,
     resolve_color_image,
     unique_colors,
 )
@@ -169,6 +171,24 @@ _REPORT_CSS = """\
   }
   .watch-chip:hover { color: var(--uq-red); }
 
+  /* ── Stock badge (per-size count) ───────────── */
+  .size-stock {
+    display: inline-block; margin-left: 4px;
+    padding: 1px 6px; font-size: .68rem; font-weight: 700;
+    border-radius: 2px; vertical-align: middle;
+    color: var(--muted); background: var(--border);
+  }
+  .size-stock.low {
+    color: #fff; background: var(--uq-red);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+
+  /* ── Rating ─────────────────────────────────── */
+  .rating {
+    font-size: .78rem; color: var(--muted);
+    font-weight: 600;
+  }
+
   /* ── Action buttons ─────────────────────────────── */
   .actions-row {
     display: flex; gap: 8px; margin-top: 6px;
@@ -197,7 +217,24 @@ _REPORT_CSS = """\
   footer span { color: var(--uq-red); font-weight: 700; }"""
 
 
-def _render_card(deal: SaleItem, index: int, server_url: str = "") -> str:
+def _stock_badge_html(qty: int, status: str, threshold: int) -> str:
+    """Render a <span class='size-stock'> badge next to a size chip.
+
+    Returns an empty string when stock data is unknown so chips stay clean.
+    """
+    stock_text, is_low = format_stock_suffix(qty, status, threshold)
+    if not stock_text:
+        return ""
+    cls = "size-stock low" if is_low else "size-stock"
+    return f'<span class="{cls}">{html_mod.escape(stock_text)}</span>'
+
+
+def _render_card(
+    deal: SaleItem,
+    index: int,
+    server_url: str = "",
+    low_stock_threshold: int = 0,
+) -> str:
     """Render a single deal as an HTML card fragment."""
     safe_name = html_mod.escape(deal.name)
     watched = (
@@ -218,17 +255,31 @@ def _render_card(deal: SaleItem, index: int, server_url: str = "") -> str:
         if best_image and first_url else img_inner
     )
 
+    qtys = deal.stock_quantities
+    statuses = deal.stock_statuses
+
+    def _stock_badge(i: int) -> str:
+        qty = qtys[i] if i < len(qtys) else 0
+        status = statuses[i] if i < len(statuses) else ""
+        return _stock_badge_html(qty, status, low_stock_threshold)
+
     actions = DealActions(deal, server_url)
     if actions.unwatch_url:
         size_parts = [
             f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
-            for sz, url in zip(deal.available_sizes, deal.product_urls)
+            f'{_stock_badge(i)}'
+            for i, (sz, url) in enumerate(
+                zip(deal.available_sizes, deal.product_urls),
+            )
         ]
     else:
         watch_map = dict(actions.watch_urls)
         size_parts = []
-        for sz, url in zip(deal.available_sizes, deal.product_urls):
+        for i, (sz, url) in enumerate(
+            zip(deal.available_sizes, deal.product_urls),
+        ):
             chip = f'<a class="size-chip" href="{url}" target="_blank">{sz}</a>'
+            chip += _stock_badge(i)
             wurl = watch_map.get(sz)
             if wurl:
                 chip += (
@@ -276,6 +327,12 @@ def _render_card(deal: SaleItem, index: int, server_url: str = "") -> str:
         if colors else ""
     )
 
+    rating_text = format_rating(deal)
+    rating_row = (
+        f'<div class="rating">{html_mod.escape(rating_text)}</div>'
+        if rating_text else ""
+    )
+
     return f"""
         <div class="card">
             <div class="card-img">{img}</div>
@@ -284,6 +341,7 @@ def _render_card(deal: SaleItem, index: int, server_url: str = "") -> str:
                     <span class="index">{index}.</span> {safe_name} {watched}
                 </div>
                 {color_row}
+                {rating_row}
                 <div class="price-row">
                     {price_row}
                 </div>
@@ -294,11 +352,15 @@ def _render_card(deal: SaleItem, index: int, server_url: str = "") -> str:
 
 
 def _build_report(
-    deals: list[SaleItem], generated_at: datetime, server_url: str = "",
+    deals: list[SaleItem],
+    generated_at: datetime,
+    server_url: str = "",
+    low_stock_threshold: int = 0,
 ) -> str:
     """Build a self-contained HTML page styled in Uniqlo corporate identity."""
     cards = "".join(
-        _render_card(deal, i, server_url) for i, deal in enumerate(deals, 1)
+        _render_card(deal, i, server_url, low_stock_threshold)
+        for i, deal in enumerate(deals, 1)
     )
     timestamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
     settings_link = (
@@ -345,10 +407,12 @@ class HtmlReportNotifier:
         enabled: bool = True,
         output_dir: str | None = None,
         server_url: str = "",
+        low_stock_threshold: int = 0,
     ) -> None:
         self._enabled = enabled
         self._output_dir = output_dir
         self._server_url = server_url
+        self._low_stock_threshold = low_stock_threshold
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -359,7 +423,12 @@ class HtmlReportNotifier:
             return
 
         now = datetime.now(timezone.utc)
-        html = _build_report(deals, now, server_url=self._server_url)
+        html = _build_report(
+            deals,
+            now,
+            server_url=self._server_url,
+            low_stock_threshold=self._low_stock_threshold,
+        )
 
         if self._output_dir:
             out = Path(self._output_dir)

@@ -13,6 +13,8 @@ from uniqlo_sales_alerter.notifications.base import (
     PROJECT_URL,
     DealActions,
     format_price,
+    format_rating,
+    format_stock_suffix,
     resolve_color_image,
 )
 
@@ -35,20 +37,49 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
                 return [deal.model_copy(update={"image_url": img})]
         return [deal]
     color_names = deal.color_names or []
+    qtys = deal.stock_quantities
+    statuses = deal.stock_statuses
     variants: list[SaleItem] = []
     for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls)):
         cn = color_names[i] if i < len(color_names) else ""
+        qty = qtys[i] if i < len(qtys) else 0
+        status = statuses[i] if i < len(statuses) else ""
         img = resolve_color_image(url, deal.color_images, deal.image_url)
         variants.append(deal.model_copy(update={
             "available_sizes": [sz],
             "product_urls": [url],
             "color_names": [cn],
+            "stock_quantities": [qty],
+            "stock_statuses": [status],
             "image_url": img,
         }))
     return variants
 
 
-def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
+def _size_link_html(
+    sz: str, url: str, qty: int, status: str, threshold: int,
+) -> str:
+    """Render a size link with an optional stock-suffix span."""
+    safe_sz = html_mod.escape(sz)
+    anchor = f'<a href="{url}">{safe_sz}</a>'
+    stock_text, is_low = format_stock_suffix(qty, status, threshold)
+    if not stock_text:
+        return anchor
+    style = (
+        "color:#c0392b;font-weight:600;" if is_low
+        else "color:#999;"
+    )
+    return (
+        f'{anchor} <span style="{style}font-size:.85em;">'
+        f'({html_mod.escape(stock_text)})</span>'
+    )
+
+
+def _build_html(
+    deals: list[SaleItem],
+    server_url: str = "",
+    low_stock_threshold: int = 0,
+) -> str:
     """Build the HTML email body, expanding each deal into per-variant rows."""
     variants: list[SaleItem] = []
     for deal in deals:
@@ -74,10 +105,24 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
             f'<small>Color: <strong>{html_mod.escape(color_name)}</strong></small><br/>'
             if color_name else ""
         )
+        qtys = variant.stock_quantities
+        statuses = variant.stock_statuses
         size_links = " &middot; ".join(
-            f'<a href="{url}">{sz}</a>'
-            for sz, url in zip(variant.available_sizes, variant.product_urls)
+            _size_link_html(
+                sz, url,
+                qtys[i] if i < len(qtys) else 0,
+                statuses[i] if i < len(statuses) else "",
+                low_stock_threshold,
+            )
+            for i, (sz, url) in enumerate(
+                zip(variant.available_sizes, variant.product_urls)
+            )
         ) or ", ".join(variant.available_sizes)
+        rating_text = format_rating(variant)
+        rating_html = (
+            f'<small style="color:#888;">{html_mod.escape(rating_text)}</small><br/>'
+            if rating_text else ""
+        )
         fp = format_price(variant)
         if fp.show_strikethrough:
             price_html = (
@@ -128,6 +173,7 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
                 <td style="padding:12px;">
                     <strong>{safe_name}</strong>{watched_badge}<br/>
                     {color_html}
+                    {rating_html}
                     {price_html}<br/>
                     <small>Size: {size_links}</small>
                     {action_html}
@@ -157,9 +203,16 @@ def _build_html(deals: list[SaleItem], server_url: str = "") -> str:
 class EmailNotifier:
     """Sends deal notifications via SMTP email."""
 
-    def __init__(self, config: EmailChannelConfig, *, server_url: str = "") -> None:
+    def __init__(
+        self,
+        config: EmailChannelConfig,
+        *,
+        server_url: str = "",
+        low_stock_threshold: int = 0,
+    ) -> None:
         self._config = config
         self._server_url = server_url
+        self._low_stock_threshold = low_stock_threshold
 
     def is_enabled(self) -> bool:
         return (
@@ -200,7 +253,14 @@ class EmailNotifier:
         msg["Subject"] = f"Uniqlo Sale Alert — {len(deals)} deal(s)"
         msg["From"] = cfg.from_address
         msg["To"] = ", ".join(cfg.to_addresses)
-        msg.attach(MIMEText(_build_html(deals, self._server_url), "html"))
+        msg.attach(MIMEText(
+            _build_html(
+                deals,
+                self._server_url,
+                self._low_stock_threshold,
+            ),
+            "html",
+        ))
 
         try:
             await aiosmtplib.send(

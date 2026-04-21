@@ -10,6 +10,8 @@ from uniqlo_sales_alerter.notifications.base import (
     PROJECT_URL,
     DealActions,
     format_price,
+    format_rating,
+    format_stock_suffix,
     resolve_color_image,
     unique_colors,
 )
@@ -27,7 +29,23 @@ def _escape_md(text: str) -> str:
     return text
 
 
-def _build_caption(deal: SaleItem, server_url: str = "") -> str:
+def _size_link(
+    sz: str, url: str, qty: int, status: str, threshold: int,
+) -> str:
+    """Render a single size as a MarkdownV2 link with optional stock suffix."""
+    stock_text, is_low = format_stock_suffix(qty, status, threshold)
+    if not stock_text:
+        label = _escape_md(sz)
+    elif is_low:
+        label = _escape_md(f"{sz} · {stock_text} ⚠")
+    else:
+        label = _escape_md(f"{sz} · {stock_text}")
+    return f"[{label}]({url})"
+
+
+def _build_caption(
+    deal: SaleItem, server_url: str = "", low_stock_threshold: int = 0,
+) -> str:
     """Build a MarkdownV2 caption for a single deal."""
     name = _escape_md(deal.name)
     fp = format_price(deal)
@@ -48,9 +66,19 @@ def _build_caption(deal: SaleItem, server_url: str = "") -> str:
         if colors else ""
     )
 
+    rating_text = format_rating(deal)
+    rating_line = _escape_md(rating_text) if rating_text else ""
+
+    qtys = deal.stock_quantities
+    statuses = deal.stock_statuses
     size_links = " \\| ".join(
-        f"[{_escape_md(sz)}]({url})"
-        for sz, url in zip(deal.available_sizes, deal.product_urls)
+        _size_link(
+            sz, url,
+            qtys[i] if i < len(qtys) else 0,
+            statuses[i] if i < len(statuses) else "",
+            low_stock_threshold,
+        )
+        for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls))
     )
 
     footer = f"[Uniqlo Sales Alerter]({PROJECT_URL})"
@@ -63,6 +91,8 @@ def _build_caption(deal: SaleItem, server_url: str = "") -> str:
         size_links or _escape_md(", ".join(deal.available_sizes)),
         f"\n{footer}",
     ]
+    if rating_line:
+        lines.insert(2, rating_line)
     if color_line:
         lines.insert(1, color_line)
     if deal.is_watched:
@@ -73,9 +103,16 @@ def _build_caption(deal: SaleItem, server_url: str = "") -> str:
 class TelegramNotifier:
     """Sends deal notifications via Telegram Bot API."""
 
-    def __init__(self, config: TelegramChannelConfig, *, server_url: str = "") -> None:
+    def __init__(
+        self,
+        config: TelegramChannelConfig,
+        *,
+        server_url: str = "",
+        low_stock_threshold: int = 0,
+    ) -> None:
         self._config = config
         self._server_url = server_url
+        self._low_stock_threshold = low_stock_threshold
 
     def is_enabled(self) -> bool:
         return self._config.enabled and bool(self._config.bot_token) and bool(self._config.chat_id)
@@ -96,7 +133,11 @@ class TelegramNotifier:
         chat_id = self._config.chat_id
 
         for deal in deals:
-            caption = _build_caption(deal, server_url=self._server_url)
+            caption = _build_caption(
+                deal,
+                server_url=self._server_url,
+                low_stock_threshold=self._low_stock_threshold,
+            )
             actions = DealActions(deal, self._server_url)
             markup = None
             if actions.ignore_url:

@@ -404,6 +404,45 @@ _TEMPLATE = """\
     </div>
   </div>
 
+  <!-- ── Notification Triggers ──────────────────── -->
+  <div class="section">
+    <div class="section-header">Notification Triggers</div>
+    <div class="section-body">
+
+      <div class="toggle-row field">
+        <div>
+          <span class="toggle-label">Suppress Low-Stock Alerts</span>
+          <div class="toggle-help">
+            Skip notifications for variants that are currently in
+            low-stock state &mdash; useful when an out-of-stock item
+            restocks with only a handful of units. The alert fires
+            again once it climbs above the threshold. Low-stock
+            sizes still appear inside other notifications so you
+            see the full state of a deal.
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="suppress-low-stock-alerts"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="low-stock-threshold">Low-Stock Threshold</label>
+        <div class="help">
+          A variant is labelled &ldquo;low stock&rdquo; when its
+          remaining quantity is at or below this number.
+          Set to <code>0</code> to disable the numeric check and
+          fall back to the Uniqlo API&rsquo;s own <code>LOW_STOCK</code>
+          flag. When positive, this setting overrides the API.
+        </div>
+        <input type="number" id="low-stock-threshold"
+          min="0" step="1" placeholder="5"/>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ── General ─────────────────────────────── -->
   <div class="section">
     <div class="section-header">General</div>
@@ -931,6 +970,11 @@ _TEMPLATE = """\
     $("preview-html").checked = !!cfg.notifications.preview_html;
     $("notify-on").value      = cfg.notifications.notify_on;
     $("check-on-startup").checked = cfg.notifications.check_on_startup !== false;
+    $("suppress-low-stock-alerts").checked =
+      !!cfg.notifications.suppress_low_stock_alerts;
+    $("low-stock-threshold").value =
+      cfg.notifications.low_stock_threshold != null
+        ? cfg.notifications.low_stock_threshold : 5;
 
     var tg = cfg.notifications.channels.telegram;
     $("telegram-enabled").checked = !!tg.enabled;
@@ -985,6 +1029,8 @@ _TEMPLATE = """\
         preview_html: checked("preview-html"),
         notify_on:    val("notify-on"),
         check_on_startup: checked("check-on-startup"),
+        low_stock_threshold: parseInt(val("low-stock-threshold"), 10) || 0,
+        suppress_low_stock_alerts: checked("suppress-low-stock-alerts"),
         channels: {
           telegram: {
             enabled:   checked("telegram-enabled"),

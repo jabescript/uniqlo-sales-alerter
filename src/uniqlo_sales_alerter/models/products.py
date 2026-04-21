@@ -8,6 +8,32 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 _DEFAULT_CURRENCY = "€"
+_LOW_STOCK_STATUS = "LOW_STOCK"
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def is_low_stock(qty: int, status: str, threshold: int) -> bool:
+    """Return *True* when a variant should be treated as low stock.
+
+    The user-specified *threshold* is authoritative when positive: a
+    variant is "low" iff its remaining quantity is positive and at or
+    below *threshold*, irrespective of the API's own ``LOW_STOCK`` flag.
+    This prevents the Uniqlo backend (which uses an undocumented internal
+    threshold) from overriding an explicit user preference such as
+    "alert me only when fewer than 5 are left".
+
+    When *threshold* is ``0`` (i.e. the user has explicitly disabled the
+    numeric comparison), the API's ``statusCode == "LOW_STOCK"`` flag is
+    used as the sole signal.  Unknown stock (``qty <= 0``) is never
+    treated as low so missing data can't spuriously fire alerts.
+    """
+    if threshold > 0:
+        return 0 < qty <= threshold
+    return status == _LOW_STOCK_STATUS
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +191,8 @@ class SaleItem(BaseModel):
     color_images: dict[str, str] = Field(default_factory=dict)
     product_urls: list[str] = Field(default_factory=list)
     color_names: list[str] = Field(default_factory=list)
+    stock_quantities: list[int] = Field(default_factory=list)
+    stock_statuses: list[str] = Field(default_factory=list)
     price_group: str = ""
     rating_average: float | None = None
     rating_count: int | None = None

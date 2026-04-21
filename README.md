@@ -271,6 +271,8 @@ Every config option can be set via env vars for initial setup. On first startup 
 | `CHECK_ON_STARTUP` | true/false | `notifications.check_on_startup` |
 | `PREVIEW_CLI` | true/false | `notifications.preview_cli` |
 | `PREVIEW_HTML` | true/false | `notifications.preview_html` |
+| `NOTIFY_LOW_STOCK_THRESHOLD` | int | `notifications.low_stock_threshold` |
+| `NOTIFY_SUPPRESS_LOW_STOCK_ALERTS` | true/false | `notifications.suppress_low_stock_alerts` |
 | `TELEGRAM_ENABLED` | true/false | `notifications.channels.telegram.enabled` |
 | `TELEGRAM_BOT_TOKEN` | string | `notifications.channels.telegram.bot_token` |
 | `TELEGRAM_CHAT_ID` | string | `notifications.channels.telegram.chat_id` |
@@ -336,7 +338,9 @@ notifications:
       chat_id: "987654321"
 ```
 
-### Notification modes
+### How notifications are triggered
+
+#### Modes
 
 | Mode | Config value | Behaviour |
 |------|-------------|-----------|
@@ -344,12 +348,51 @@ notifications:
 | **New deals only** | `new_deals` | Only new/changed deals, even across restarts (state is persisted). |
 | **Every check** | `every_check` | Sends all matching deals every time. Good for daily digests. |
 
-<details>
-<summary><strong>What counts as a "change"?</strong></summary>
+#### Variant key
 
-Internally, the system tracks `product:color:size:discount%` combinations. A deal counts as "new" when it has at least one unseen combination (new product, new size in stock, changed discount, or back on sale). In `new_deals` mode, state is saved to `.seen_variants.json`; delete the file to reset. In `all_then_new` mode, state resets on restart.
+Internally each purchasable variant has a unique key:
 
-</details>
+```
+product_id:color:size:discount%
+```
+
+A deal is considered "new" when at least one of its variant keys is not in the seen-set. The seen-set is refreshed after every run — anything not currently in stock is evicted, which is the mechanism that lets restocks re-notify.
+
+Unknown-discount countries (US, CA, JP, KR, SG, PH, TH) substitute the literal `sale` for the percentage.
+
+When `notifications.suppress_low_stock_alerts: true`, variants currently below the low-stock threshold are **omitted** from the key set. They stay unseen, so they won't fire a "new deal" alert until the quantity climbs back above the threshold. This is useful when you don't want to be pinged every time an out-of-stock item restocks with only 2 units.
+
+#### Trigger matrix
+
+| Event | Notification fired? |
+|---|---|
+| Item first seen (fresh process start or new variant appears) | Yes, unless `suppress_low_stock_alerts` is on and the variant is below the threshold |
+| New size or colour becomes available on an existing deal | Yes, same caveat as above |
+| Discount percentage changes (price change) | Yes |
+| Item leaves the sale feed or goes fully out of stock | Silent drop (no "gone" alert; all its keys are evicted) |
+| A single size goes out of stock (others remain) | Silent drop for that size |
+| Variant restocks after being out of stock, above threshold | Yes — reappears as a new deal |
+| Variant restocks after being out of stock, at or below threshold | Yes — unless `suppress_low_stock_alerts: true` |
+| Stock quantity changes but stays above the threshold | Never |
+| Variant quantity drops below threshold (no OOS) | Never — key is already in the seen-set |
+| Suppressed variant climbs back above the threshold | Yes — fires as a new deal |
+
+#### State persistence
+
+- **`new_deals`** mode saves the seen-set to `.seen_variants.json` (path configurable via `STATE_FILE`). State survives container restarts. Delete the file to reset.
+- **`all_then_new`** mode keeps the seen-set in memory only. Every process restart fires one "all current deals" notification, then behaves like `new_deals` for the rest of that session.
+- **`every_check`** mode ignores the seen-set entirely — every run sends every matching deal.
+
+#### Notification Triggers settings
+
+The web UI's **Notification Triggers** section (between Schedule and General) exposes:
+
+- **Suppress Low-Stock Alerts** — toggles the `suppress_low_stock_alerts` flag described above. Off by default, so upgrades don't change existing behaviour. Turn it on when you want to stop being pinged about OOS items that restock with only a handful of units; the alert will fire again once the quantity climbs above the threshold.
+- **Low-Stock Threshold** — integer, default `5`. A variant is considered low stock when its remaining quantity is at or below this number. When positive this setting is **authoritative** — it overrides the Uniqlo API's own `LOW_STOCK` flag, so a variant the API calls "low" at 50 units won't be badged (or suppressed) if you only care about ≤5. Set to `0` to disable the numeric comparison and fall back to the API's flag as the sole signal.
+
+#### Country caveat (PH / TH)
+
+Thailand and Philippines use Uniqlo's v3 API, whose stock endpoint reports 100% out-of-stock even when items are clearly available. The checker falls back to L2 data without stock filtering for these countries — meaning OOS, restock, and low-stock transitions aren't detected, and the low-stock suppression toggle has no effect. Discount / size changes still trigger normally.
 
 ## Deployment
 

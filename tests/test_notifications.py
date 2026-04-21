@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from uniqlo_sales_alerter.config import AppConfig, EmailChannelConfig, TelegramChannelConfig
+from uniqlo_sales_alerter.models.products import is_low_stock
 from uniqlo_sales_alerter.notifications.base import (
     Notifier,
     _derive_color_image,
+    format_rating,
+    format_stock_suffix,
     resolve_color_image,
 )
 from uniqlo_sales_alerter.notifications.console import ConsoleNotifier, _format_deal
@@ -729,3 +732,194 @@ class TestResolveColorImage:
         assert len(variants) == 2
         assert "_01_" in variants[0].image_url
         assert "_69_" in variants[1].image_url
+
+
+# ---------------------------------------------------------------------------
+# Stock count + low-stock badge + rating — cross-channel assertions
+# ---------------------------------------------------------------------------
+
+
+def _stock_deal(qtys, statuses=None, **overrides):
+    """Build a SaleItem with stock metadata parallel to its three sizes."""
+    if statuses is None:
+        statuses = ["IN_STOCK"] * len(qtys)
+    return _sample_deal(
+        stock_quantities=qtys,
+        stock_statuses=statuses,
+        **overrides,
+    )
+
+
+class TestStockCountDisplay:
+    """All four channels must render the exact stock count when available."""
+
+    def _render_all(self, deal, threshold):
+        return {
+            "console": _format_deal(deal, 1, low_stock_threshold=threshold),
+            "telegram": _build_caption(deal, low_stock_threshold=threshold),
+            "email": _build_html([deal], low_stock_threshold=threshold),
+            "html_report": _build_report(
+                [deal], _REPORT_TS, low_stock_threshold=threshold,
+            ),
+        }
+
+    def test_exact_count_rendered_per_channel(self):
+        deal = _stock_deal([20, 15, 8])
+        outputs = self._render_all(deal, threshold=5)
+        for name, out in outputs.items():
+            assert "20" in out, f"{name} missing qty 20"
+            assert "15" in out, f"{name} missing qty 15"
+            assert "8" in out, f"{name} missing qty 8"
+
+    def test_low_stock_badge_rendered_per_channel(self):
+        deal = _stock_deal([20, 15, 2])
+        outputs = self._render_all(deal, threshold=5)
+        for name, out in outputs.items():
+            assert "low stock" in out.lower(), f"{name} missing low-stock badge"
+
+    def test_user_threshold_overrides_api_low_stock(self):
+        """User threshold is authoritative — API's LOW_STOCK flag is ignored."""
+        deal = _stock_deal([99, 99, 99], ["IN_STOCK", "IN_STOCK", "LOW_STOCK"])
+        outputs = self._render_all(deal, threshold=5)
+        for name, out in outputs.items():
+            assert "low stock" not in out.lower(), (
+                f"{name} surfaced low-stock badge despite user threshold 5"
+            )
+
+    def test_api_low_stock_used_when_threshold_disabled(self):
+        """Threshold 0 falls back to the API's LOW_STOCK flag."""
+        deal = _stock_deal([99, 99, 99], ["IN_STOCK", "IN_STOCK", "LOW_STOCK"])
+        outputs = self._render_all(deal, threshold=0)
+        for name, out in outputs.items():
+            assert "low stock" in out.lower(), (
+                f"{name} should show API-flagged low stock at threshold=0"
+            )
+
+    def test_unknown_stock_shows_no_suffix(self):
+        """Empty arrays (PH/TH fallback) must render no count and no badge."""
+        deal = _stock_deal([], statuses=[])
+        outputs = self._render_all(deal, threshold=5)
+        for name, out in outputs.items():
+            assert "low stock" not in out.lower(), f"{name} leaked low badge"
+
+    def test_html_report_low_class_applied(self):
+        deal = _stock_deal([20, 15, 2])
+        html = _build_report([deal], _REPORT_TS, low_stock_threshold=5)
+        assert '<span class="size-stock low">' in html
+
+    def test_html_report_non_low_uses_plain_class(self):
+        deal = _stock_deal([20, 15, 8])
+        html = _build_report([deal], _REPORT_TS, low_stock_threshold=5)
+        assert '<span class="size-stock">' in html
+        assert '<span class="size-stock low">' not in html
+
+
+class TestRatingDisplay:
+    """All four channels must render the product rating when available."""
+
+    def _render_all(self, deal):
+        return {
+            "console": _format_deal(deal, 1),
+            "telegram": _build_caption(deal),
+            "email": _build_html([deal]),
+            "html_report": _build_report([deal], _REPORT_TS),
+        }
+
+    def test_rating_rendered_when_present(self):
+        deal = _sample_deal(rating_average=4.3, rating_count=127)
+        # Telegram escapes the dot in "4.3" to "4\.3" (MarkdownV2), so strip
+        # backslashes before checking the average.
+        for name, out in self._render_all(deal).items():
+            assert "4.3" in out.replace("\\", ""), f"{name} missing rating average"
+            assert "127" in out, f"{name} missing rating count"
+
+    def test_rating_hidden_when_count_zero(self):
+        deal = _sample_deal(rating_average=None, rating_count=0)
+        for name, out in self._render_all(deal).items():
+            assert "★" not in out, f"{name} showed star with no rating"
+
+    def test_single_review_pluralisation(self):
+        deal = _sample_deal(rating_average=5.0, rating_count=1)
+        out = _format_deal(deal, 1)
+        assert "1 review)" in out
+        assert "reviews" not in out
+
+
+class TestIsLowStock:
+    """Unit tests for the shared is_low_stock helper.
+
+    Semantics: a positive *threshold* is authoritative and suppresses the
+    API's own ``LOW_STOCK`` flag. Threshold ``0`` falls back to the API.
+    """
+
+    @pytest.mark.parametrize("qty,status,threshold,expected", [
+        (0, "", 5, False),
+        (0, "STOCK_OUT", 5, False),
+        (-1, "IN_STOCK", 5, False),
+        (5, "IN_STOCK", 5, True),
+        (4, "IN_STOCK", 5, True),
+        (6, "IN_STOCK", 5, False),
+        (100, "LOW_STOCK", 5, False),
+        (3, "LOW_STOCK", 5, True),
+        (100, "LOW_STOCK", 0, True),
+        (3, "IN_STOCK", 0, False),
+        (0, "LOW_STOCK", 0, True),
+    ], ids=[
+        "unknown_qty_no_status",
+        "unknown_qty_stock_out",
+        "negative_qty",
+        "at_threshold",
+        "below_threshold",
+        "above_threshold",
+        "api_flag_ignored_when_threshold_set",
+        "both_agree_below_threshold",
+        "api_fallback_when_threshold_zero",
+        "threshold_zero_no_api_flag",
+        "api_fallback_with_zero_qty",
+    ])
+    def test_is_low_stock(self, qty, status, threshold, expected):
+        assert is_low_stock(qty, status, threshold) is expected
+
+
+class TestFormatStockSuffix:
+    """Unit tests for format_stock_suffix."""
+
+    @pytest.mark.parametrize("qty,status,threshold,expected", [
+        (0, "", 5, ("", False)),
+        (12, "IN_STOCK", 5, ("12", False)),
+        (3, "IN_STOCK", 5, ("3, low stock", True)),
+        (99, "LOW_STOCK", 5, ("99", False)),
+        (3, "LOW_STOCK", 5, ("3, low stock", True)),
+        (99, "LOW_STOCK", 0, ("99, low stock", True)),
+        (0, "LOW_STOCK", 0, ("low stock", True)),
+    ], ids=[
+        "unknown",
+        "plain_count",
+        "quantity_low",
+        "api_flag_overridden_by_threshold",
+        "threshold_and_api_agree",
+        "api_fallback_when_threshold_zero",
+        "api_fallback_no_qty",
+    ])
+    def test_format_stock_suffix(self, qty, status, threshold, expected):
+        assert format_stock_suffix(qty, status, threshold) == expected
+
+
+class TestFormatRating:
+    """Unit tests for format_rating."""
+
+    def test_no_rating_returns_none(self):
+        deal = _sample_deal(rating_average=None, rating_count=0)
+        assert format_rating(deal) is None
+
+    def test_rating_with_reviews(self):
+        deal = _sample_deal(rating_average=4.3, rating_count=127)
+        assert format_rating(deal) == "★ 4.3 (127 reviews)"
+
+    def test_single_review_singular(self):
+        deal = _sample_deal(rating_average=5.0, rating_count=1)
+        assert format_rating(deal) == "★ 5.0 (1 review)"
+
+    def test_zero_count_hides_even_with_average(self):
+        deal = _sample_deal(rating_average=4.3, rating_count=0)
+        assert format_rating(deal) is None

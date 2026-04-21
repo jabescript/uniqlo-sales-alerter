@@ -304,7 +304,7 @@ class TestStockVerification:
             "A2": {"statusCode": "IN_STOCK", "quantity": 50},
         }
         result = SaleChecker._pick_in_stock_variant("M", l2s, stock, {"M"})
-        assert result == ("64", "004", "BLUE")  # BLUE has more stock
+        assert result == ("64", "004", "BLUE", 50, "IN_STOCK")
 
     def test_returns_none_when_all_out_of_stock(self):
         l2s = [_make_l2("M", "004", "RED", "15", "A1")]
@@ -337,7 +337,7 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("15", "004", "RED")  # RED preferred despite lower qty
+        assert result == ("15", "004", "RED", 5, "IN_STOCK")
 
     def test_preferred_color_falls_back_when_oos(self):
         """If the preferred color is out of stock, fall back to highest quantity."""
@@ -352,7 +352,7 @@ class TestStockVerification:
         result = SaleChecker._pick_in_stock_variant(
             "M", l2s, stock, {"M"}, preferred_color="15",
         )
-        assert result == ("64", "004", "BLUE")  # BLUE, since RED is out
+        assert result == ("64", "004", "BLUE", 50, "IN_STOCK")
 
     @pytest.mark.asyncio
     async def test_verify_stock_drops_oos_sizes(self, sale_config: AppConfig):
@@ -386,6 +386,8 @@ class TestStockVerification:
         assert result[0].available_sizes == ["L"]
         assert "colorDisplayCode=15" in result[0].product_urls[0]
         assert result[0].color_names == ["RED"]
+        assert result[0].stock_quantities == [5]
+        assert result[0].stock_statuses == ["IN_STOCK"]
 
     @pytest.mark.asyncio
     async def test_verify_stock_keeps_item_when_all_oos(
@@ -963,7 +965,7 @@ class TestUnknownDiscountFiltering:
 
 
 class TestVariantKeys:
-    """Unit tests for the static _variant_keys helper."""
+    """Unit tests for the _variant_keys helper."""
 
     @pytest.mark.parametrize("deal_kwargs,expected_keys", [
         pytest.param(
@@ -1020,6 +1022,179 @@ class TestVariantKeys:
             id="unknown_discount_fallback",
         ),
     ])
-    def test_variant_keys(self, deal_kwargs, expected_keys):
+    def test_variant_keys(self, default_config, deal_kwargs, expected_keys):
+        checker = SaleChecker(default_config)
         item = sample_deal(**deal_kwargs)
-        assert SaleChecker._variant_keys(item) == expected_keys
+        assert checker._variant_keys(item) == expected_keys
+
+
+class TestLowStockSuppression:
+    """The ``suppress_low_stock_alerts`` toggle omits low-stock variant keys.
+
+    With the toggle on, low-stock variants stay *unseen* (absent from the
+    seen-set), so future checks only add them back — and therefore fire a
+    new-deal alert — once the quantity climbs above the threshold.
+    """
+
+    _URLS = [
+        "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+    ]
+    _URLS_MULTI = [
+        "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+        "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005",
+    ]
+
+    def _checker(
+        self, *, suppress: bool, threshold: int = 5,
+    ) -> SaleChecker:
+        cfg = AppConfig.model_validate({
+            "notifications": {
+                "suppress_low_stock_alerts": suppress,
+                "low_stock_threshold": threshold,
+            },
+        })
+        return SaleChecker(cfg)
+
+    def test_toggle_off_keys_unchanged(self):
+        """Classic behaviour: low-stock variants still produce keys."""
+        checker = self._checker(suppress=False, threshold=5)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=self._URLS,
+            stock_quantities=[3], stock_statuses=["IN_STOCK"],
+        )
+        assert checker._variant_keys(item) == {"E001:09:004:60"}
+
+    def test_toggle_on_suppresses_low_stock_key(self):
+        """Low-stock variant must not appear in the key set."""
+        checker = self._checker(suppress=True, threshold=5)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=self._URLS,
+            stock_quantities=[3], stock_statuses=["IN_STOCK"],
+        )
+        assert checker._variant_keys(item) == set()
+
+    def test_toggle_on_keeps_non_low_variants(self):
+        """Only low-stock variants are filtered; healthy ones survive."""
+        checker = self._checker(suppress=True, threshold=5)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M", "L"], product_urls=self._URLS_MULTI,
+            stock_quantities=[3, 20], stock_statuses=["IN_STOCK", "IN_STOCK"],
+        )
+        assert checker._variant_keys(item) == {"E001:09:005:60"}
+
+    def test_toggle_on_respects_threshold_precedence(self):
+        """API LOW_STOCK is ignored when user threshold is set."""
+        checker = self._checker(suppress=True, threshold=5)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=self._URLS,
+            stock_quantities=[42], stock_statuses=["LOW_STOCK"],
+        )
+        # qty 42 > threshold 5 → not low → key kept.
+        assert checker._variant_keys(item) == {"E001:09:004:60"}
+
+    def test_toggle_on_uses_api_fallback_when_threshold_zero(self):
+        """Threshold 0 falls back to API flag for low-stock determination."""
+        checker = self._checker(suppress=True, threshold=0)
+        item = sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=self._URLS,
+            stock_quantities=[42], stock_statuses=["LOW_STOCK"],
+        )
+        # API says low → key filtered out.
+        assert checker._variant_keys(item) == set()
+
+
+class TestNewDealDedup:
+    """End-to-end retrigger behaviour with and without the suppression toggle."""
+
+    _URLS = [
+        "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004",
+    ]
+
+    def _cfg(self, *, suppress: bool, threshold: int) -> AppConfig:
+        return AppConfig.model_validate({
+            "notifications": {
+                "notify_on": "new_deals",
+                "suppress_low_stock_alerts": suppress,
+                "low_stock_threshold": threshold,
+            },
+        })
+
+    def _build_item(self, qty: int) -> object:
+        return sample_deal(
+            product_id="E001", discount_percentage=60,
+            available_sizes=["M"], product_urls=self._URLS,
+            stock_quantities=[qty], stock_statuses=["IN_STOCK"],
+        )
+
+    def _run_check(
+        self, cfg: AppConfig, item, state_file: Path,
+    ) -> tuple[set[str], list[str]]:
+        """Simulate one check cycle; return (new_seen_set, new_deal_keys)."""
+        checker = SaleChecker(cfg, state_file=state_file)
+        seen_before = checker._seen_variants
+        keys = checker._variant_keys(item)
+        new_keys = sorted(keys - seen_before)
+        checker._save_state(keys)
+        return keys, new_keys
+
+    def test_qty_fluctuation_above_threshold_does_not_retrigger(
+        self, tmp_path: Path,
+    ):
+        """20 -> 10 (both above 5): no alert either time."""
+        cfg = self._cfg(suppress=False, threshold=5)
+        state = tmp_path / ".seen.json"
+        _, first = self._run_check(cfg, self._build_item(20), state)
+        _, second = self._run_check(cfg, self._build_item(10), state)
+        assert first, "first check must fire"
+        assert second == [], "qty drop within normal stock must not retrigger"
+
+    def test_oos_to_low_restock_suppressed_when_toggle_on(
+        self, tmp_path: Path,
+    ):
+        """Item at 20 → OOS → restock at 2 (≤ threshold) must NOT alert."""
+        cfg = self._cfg(suppress=True, threshold=5)
+        state = tmp_path / ".seen.json"
+        # First run: healthy qty → key saved.
+        self._run_check(cfg, self._build_item(20), state)
+        # OOS run: item missing from matching → keys for this item not in current.
+        # We simulate by having an empty matching set: just clear state.
+        SaleChecker(cfg, state_file=state)._save_state(set())
+        # Restock at low level — toggle must suppress.
+        _, new_keys = self._run_check(cfg, self._build_item(2), state)
+        assert new_keys == [], "low-stock restock must be suppressed"
+
+    def test_oos_to_low_restock_alerts_when_toggle_off(
+        self, tmp_path: Path,
+    ):
+        """Same sequence without the toggle: user gets the classic restock alert."""
+        cfg = self._cfg(suppress=False, threshold=5)
+        state = tmp_path / ".seen.json"
+        self._run_check(cfg, self._build_item(20), state)
+        SaleChecker(cfg, state_file=state)._save_state(set())
+        _, new_keys = self._run_check(cfg, self._build_item(2), state)
+        assert new_keys, "without the toggle, any restock should retrigger"
+
+    def test_low_restock_then_climb_fires_once_above_threshold(
+        self, tmp_path: Path,
+    ):
+        """Toggle on: suppressed at 2, then alert fires when qty climbs to 20."""
+        cfg = self._cfg(suppress=True, threshold=5)
+        state = tmp_path / ".seen.json"
+        # Restock at low level — no alert.
+        _, low = self._run_check(cfg, self._build_item(2), state)
+        assert low == []
+        # Climb to healthy — alert fires.
+        _, high = self._run_check(cfg, self._build_item(20), state)
+        assert high, "alert must fire when qty climbs above the threshold"
+
+    def test_first_seen_low_stock_is_suppressed(self, tmp_path: Path):
+        """A brand-new item first spotted at low stock must not alert."""
+        cfg = self._cfg(suppress=True, threshold=5)
+        state = tmp_path / ".seen.json"
+        _, new_keys = self._run_check(cfg, self._build_item(3), state)
+        assert new_keys == []

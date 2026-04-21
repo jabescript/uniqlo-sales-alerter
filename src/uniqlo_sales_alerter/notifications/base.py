@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, quote, urlparse
 
-from uniqlo_sales_alerter.models.products import SaleItem
+from uniqlo_sales_alerter.models.products import SaleItem, is_low_stock
 
 PROJECT_URL = "https://github.com/kequach/uniqlo-sales-alerter"
 
@@ -69,6 +69,40 @@ def format_price(deal: SaleItem) -> FormattedPrice:
         show_strikethrough=False,
         show_sale_badge=False,
     )
+
+
+def format_stock_suffix(
+    qty: int, status: str, threshold: int,
+) -> tuple[str, bool]:
+    """Return ``(text, is_low)`` for a single variant's stock cell.
+
+    ``text`` is empty when stock data is unavailable (``qty <= 0`` and
+    status is not ``LOW_STOCK``); channels should render nothing in that
+    case.  Callers decide how to style the low-stock text — this helper
+    only provides the raw label and a boolean.
+    """
+    low = is_low_stock(qty, status, threshold)
+    if low and qty > 0:
+        return f"{qty}, low stock", True
+    if low:
+        return "low stock", True
+    if qty > 0:
+        return f"{qty}", False
+    return "", False
+
+
+def format_rating(deal: SaleItem) -> str | None:
+    """Return a channel-agnostic rating string, or *None* when no ratings.
+
+    Example: ``"★ 4.3 (127 reviews)"``.  Only renders when the product has
+    at least one rating so brand-new items aren't polluted with empty stars.
+    """
+    count = deal.rating_count or 0
+    avg = deal.rating_average
+    if count <= 0 or avg is None:
+        return None
+    noun = "review" if count == 1 else "reviews"
+    return f"★ {avg:.1f} ({count} {noun})"
 
 
 # ---------------------------------------------------------------------------

@@ -48,24 +48,39 @@ class NotificationDispatcher:
         notifiers: list[Notifier] = []
 
         server_url = config.full_server_url
+        threshold = ncfg.low_stock_threshold
 
-        tg = TelegramNotifier(channels.telegram, server_url=server_url)
+        tg = TelegramNotifier(
+            channels.telegram,
+            server_url=server_url,
+            low_stock_threshold=threshold,
+        )
         notifiers.append(tg)
         logger.debug("Registered TelegramNotifier (enabled=%s)", tg.is_enabled())
 
-        em = EmailNotifier(channels.email, server_url=server_url)
+        em = EmailNotifier(
+            channels.email,
+            server_url=server_url,
+            low_stock_threshold=threshold,
+        )
         notifiers.append(em)
         logger.debug("Registered EmailNotifier (enabled=%s)", em.is_enabled())
         if not em.is_enabled():
             _log_email_disabled(channels.email)
 
         if ncfg.preview_cli:
-            notifiers.append(ConsoleNotifier(enabled=True, server_url=server_url))
+            notifiers.append(ConsoleNotifier(
+                enabled=True,
+                server_url=server_url,
+                low_stock_threshold=threshold,
+            ))
             logger.debug("Registered ConsoleNotifier (preview_cli)")
         if ncfg.preview_html:
-            notifiers.append(
-                HtmlReportNotifier(enabled=True, server_url=server_url),
-            )
+            notifiers.append(HtmlReportNotifier(
+                enabled=True,
+                server_url=server_url,
+                low_stock_threshold=threshold,
+            ))
             logger.debug("Registered HtmlReportNotifier (preview_html)")
 
         return notifiers

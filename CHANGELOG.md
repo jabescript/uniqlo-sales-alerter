@@ -6,6 +6,20 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ## v1.5.0 — 2026-04-18
 
+### New features
+
+- **Per-variant stock count in every notification** — console, email, Telegram, and the HTML report now show the exact number of units remaining next to each size chip (e.g. `M (12)`). The data comes from the v5 stock API that was already being called for in-stock filtering.
+- **Low-stock badge** — variants whose quantity is at or below a configurable threshold are marked `(3, low stock)` and styled in red in each channel. The user threshold is authoritative when positive; set it to `0` to fall back to the Uniqlo API's own `LOW_STOCK` flag as the sole signal.
+- **Opt-in low-stock alert suppression** — a new `notifications.suppress_low_stock_alerts` toggle keeps low-stock variants out of the seen-set so they don't fire an alert. The typical use case: an out-of-stock item restocks with only 2 units while your threshold is 5 — normally that would retrigger a notification, but with the toggle on it's quietly deferred until the quantity climbs back above the threshold. Low-stock sizes still appear inside other notifications so you see the full state of a deal.
+- **Product rating** — when the Uniqlo API exposes reviews, notifications now include a `★ 4.3 (127 reviews)` line below the product title.
+- **New "Notification Triggers" settings section** — sits between *Schedule* and *General* in the web UI. Contains the low-stock threshold (default 5) and the opt-in re-alert toggle (default off).
+
+### Config
+
+- New `notifications.low_stock_threshold` (int, default `5`) and `notifications.suppress_low_stock_alerts` (bool, default `false`) in `config.yaml`.
+- New env vars `NOTIFY_LOW_STOCK_THRESHOLD` and `NOTIFY_SUPPRESS_LOW_STOCK_ALERTS`.
+- New fields `SaleItem.stock_quantities` and `SaleItem.stock_statuses` (parallel to `available_sizes`); safe to ignore for consumers that don't need them.
+
 ### Improvements
 
 - **Quieter INFO logs** — demoted 16 verbose or redundant log lines to DEBUG across config, dispatcher, email, sale checker, and Uniqlo client. A typical sale-check cycle now produces ~3 INFO lines (fetch summary, result, delivery) instead of ~10. Internal details like notifier registration, state file loading, quiet-hour skips, and per-endpoint pagination totals are still available at DEBUG level. APScheduler's per-job "executed successfully" messages are also suppressed.
@@ -18,6 +32,10 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 - **Test consolidation** — reduced test suite from 221 to 201 tests by extracting cross-channel consistency tests (color labels, watched badges, unknown discount display), parametrizing repetitive patterns (`TestCoerce`, `TestDeepMerge`, `TestVariantKeys`, enabled/disabled checks), and merging overlapping assertions. No coverage removed.
 - **Architecture refactor** — DRY: shared price/colour/image helpers in `notifications/base.py`, unified pagination (`_paginate`), single `build_product_url`. Replaced global `state` with FastAPI `Depends()` injection. Split `_build_report` into `_render_card` + `_REPORT_CSS`. Added `html.escape()`, narrowed broad `except` blocks, aligned v3/v5 logging.
 - **End-to-end test** (`test_e2e_html_preview.py`) — new test suite that hits the live Uniqlo API, runs the full sale-check pipeline, generates an HTML report, and cross-verifies: every deal has required fields, valid product URLs with correct query params, consistent discount percentages, and that the report faithfully includes all deal names, prices, sizes, and action links. Also spot-checks that product IDs and page URLs resolve in the real API. Skips gracefully when the API is unreachable.
+
+### Docs
+
+- **README**: expanded the old *Notification modes* section into a richer *How notifications are triggered* walkthrough covering first-seen, size restocks, OOS silent-drops, restock re-fires, discount changes, quantity fluctuations, and the new opt-in low-stock crossing. Added the full variant-key format and a PH/TH caveat.
 
 ### Bug fixes
 

@@ -67,6 +67,28 @@ class TestAppConfig:
         })
         assert cfg.uniqlo.sale_paths == ["5855", "5856"]
 
+    def test_low_stock_defaults(self):
+        """Defaults preserve existing behaviour — suppression off, threshold 5."""
+        cfg = AppConfig()
+        assert cfg.notifications.low_stock_threshold == 5
+        assert cfg.notifications.suppress_low_stock_alerts is False
+
+    def test_low_stock_configured(self):
+        cfg = AppConfig.model_validate({
+            "notifications": {
+                "low_stock_threshold": 10,
+                "suppress_low_stock_alerts": True,
+            },
+        })
+        assert cfg.notifications.low_stock_threshold == 10
+        assert cfg.notifications.suppress_low_stock_alerts is True
+
+    def test_low_stock_threshold_rejects_negative(self):
+        with pytest.raises(ValueError):
+            AppConfig.model_validate({
+                "notifications": {"low_stock_threshold": -1},
+            })
+
 
 class TestLoadConfig:
     def test_load_from_yaml(self, tmp_path: Path):
@@ -195,6 +217,13 @@ class TestConfigFromEnv:
         assert email["smtp_host"] == "mail.example.com"
         assert email["smtp_port"] == 465
         assert email["to_addresses"] == ["a@b.com", "c@d.com"]
+
+    def test_low_stock_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("NOTIFY_LOW_STOCK_THRESHOLD", "7")
+        monkeypatch.setenv("NOTIFY_SUPPRESS_LOW_STOCK_ALERTS", "true")
+        result = _config_from_env()
+        assert result["notifications"]["low_stock_threshold"] == 7
+        assert result["notifications"]["suppress_low_stock_alerts"] is True
 
 
 class TestLoadConfigEnvVars:

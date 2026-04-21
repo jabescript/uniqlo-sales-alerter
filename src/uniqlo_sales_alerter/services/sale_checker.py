@@ -17,6 +17,7 @@ from uniqlo_sales_alerter.models.products import (
     UniqloProduct,
     UniqloSize,
     build_product_url,
+    is_low_stock,
 )
 
 if TYPE_CHECKING:
@@ -109,9 +110,8 @@ class SaleChecker:
         from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
 
-    @staticmethod
-    def _variant_keys(item: SaleItem) -> set[str]:
-        """Extract ``product_id:color:size:discount`` keys from a SaleItem's URLs.
+    def _variant_keys(self, item: SaleItem) -> set[str]:
+        """Extract ``product_id:color:size:discount`` keys from a SaleItem.
 
         Each URL contains ``colorDisplayCode`` and ``sizeDisplayCode`` query
         parameters that uniquely identify a purchasable variant.  The discount
@@ -119,20 +119,44 @@ class SaleChecker:
         detected as a new deal.  For items without a known discount (some
         countries don't expose the original price), the literal ``"sale"`` is
         used instead so size/color changes still trigger notifications.
+
+        When :pyattr:`NotificationConfig.suppress_low_stock_alerts` is
+        ``True`` any variant currently in low-stock state is **omitted**
+        from the returned set.  This keeps it out of the seen-set, so the
+        user only gets alerted when it climbs back above the threshold —
+        avoiding notifications for OOS items that restock with just a
+        handful of units.
+
         Falls back to ``product_id:suffix`` when no URL parameters are available.
         """
+        cfg = self._config.notifications
         suffix = f"{item.discount_percentage:g}" if item.has_known_discount else "sale"
+        suppress_low = cfg.suppress_low_stock_alerts
+        threshold = cfg.low_stock_threshold
+
         keys: set[str] = set()
-        for url in item.product_urls:
+        saw_variant_url = False
+        for idx, url in enumerate(item.product_urls):
             parsed = urlparse(url)
             params = parse_qs(parsed.query)
             color = params.get("colorDisplayCode", [""])[0]
             size = params.get("sizeDisplayCode", [""])[0]
-            if color and size:
-                keys.add(f"{item.product_id}:{color}:{size}:{suffix}")
-        if not keys:
+            if not (color and size):
+                continue
+            saw_variant_url = True
+            if suppress_low and self._variant_is_low(item, idx, threshold):
+                continue
+            keys.add(f"{item.product_id}:{color}:{size}:{suffix}")
+        if not saw_variant_url:
             keys.add(f"{item.product_id}:{suffix}")
         return keys
+
+    @staticmethod
+    def _variant_is_low(item: SaleItem, idx: int, threshold: int) -> bool:
+        """True when the variant at *idx* is currently in low-stock state."""
+        qty = item.stock_quantities[idx] if idx < len(item.stock_quantities) else 0
+        status = item.stock_statuses[idx] if idx < len(item.stock_statuses) else ""
+        return is_low_stock(qty, status, threshold)
 
     async def check(self) -> SaleCheckResult:
         """Run a full sale check: fetch sale items, filter, diff, and cache."""
@@ -462,6 +486,8 @@ class SaleChecker:
         verified_sizes: list[str] = []
         verified_urls: list[str] = []
         verified_color_names: list[str] = []
+        verified_quantities: list[int] = []
+        verified_statuses: list[str] = []
 
         for size_name in item.available_sizes:
             best = self._pick_in_stock_variant(
@@ -472,9 +498,11 @@ class SaleChecker:
                 preferred_color=preferred_colors.get(size_name.upper()),
             )
             if best is not None:
-                color_dc, size_dc, color_name = best
+                color_dc, size_dc, color_name, qty, status = best
                 verified_sizes.append(size_name)
                 verified_color_names.append(color_name)
+                verified_quantities.append(qty)
+                verified_statuses.append(status)
                 verified_urls.append(
                     build_product_url(base, item.product_id, item.price_group, color_dc, size_dc)
                 )
@@ -499,6 +527,8 @@ class SaleChecker:
             "available_sizes": verified_sizes,
             "product_urls": verified_urls,
             "color_names": verified_color_names,
+            "stock_quantities": verified_quantities,
+            "stock_statuses": verified_statuses,
         })
 
     @staticmethod
@@ -536,10 +566,15 @@ class SaleChecker:
                 rebuilt_urls.append("")
                 rebuilt_colors.append("")
 
+        # Stock data is genuinely unknown in this fallback path — fill with
+        # zeros / empty strings so downstream code can't mistake an absent
+        # figure for a real low-stock signal.
         return item.model_copy(update={
             "available_sizes": rebuilt_sizes,
             "product_urls": rebuilt_urls,
             "color_names": rebuilt_colors,
+            "stock_quantities": [0] * len(rebuilt_sizes),
+            "stock_statuses": [""] * len(rebuilt_sizes),
         })
 
     @staticmethod
@@ -549,36 +584,38 @@ class SaleChecker:
         stock_map: dict[str, dict],
         wanted_sizes: set[str],
         preferred_color: str | None = None,
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[str, str, str, int, str] | None:
         """Find an in-stock colour for *size_name*.
 
-        Returns ``(colorDisplayCode, sizeDisplayCode, colorName)`` or *None*.
-        When *preferred_color* is given (from a watched URL) and that colour is
-        in stock, it wins regardless of quantity.  Otherwise the highest-quantity
-        variant is chosen.
+        Returns ``(colorDisplayCode, sizeDisplayCode, colorName, quantity,
+        statusCode)`` or *None*.  When *preferred_color* is given (from a
+        watched URL) and that colour is in stock, it wins regardless of
+        quantity.  Otherwise the highest-quantity variant is chosen.
         """
-        candidates: list[tuple[int, str, str, str]] = []
+        candidates: list[tuple[int, str, str, str, str]] = []
         for l2 in l2s:
             sz = l2.get("size", {})
             if sz.get("name", "").upper() != size_name.upper():
                 continue
             l2id = l2.get("l2Id", "")
             stock = stock_map.get(l2id, {})
-            if stock.get("statusCode") in _IN_STOCK_STATUSES:
+            status = stock.get("statusCode", "")
+            if status in _IN_STOCK_STATUSES:
                 qty = stock.get("quantity", 0)
                 color_obj = l2.get("color", {})
                 color_dc = color_obj.get("displayCode", "")
                 color_name = color_obj.get("name", "")
                 size_dc = sz.get("displayCode", "")
-                candidates.append((qty, color_dc, size_dc, color_name))
+                candidates.append((qty, color_dc, size_dc, color_name, status))
 
         if not candidates:
             return None
 
         if preferred_color:
-            for _qty, color_dc, size_dc, color_name in candidates:
+            for qty, color_dc, size_dc, color_name, status in candidates:
                 if color_dc == preferred_color:
-                    return color_dc, size_dc, color_name
+                    return color_dc, size_dc, color_name, qty, status
 
         candidates.sort(reverse=True)  # highest quantity first
-        return candidates[0][1], candidates[0][2], candidates[0][3]
+        qty, color_dc, size_dc, color_name, status = candidates[0]
+        return color_dc, size_dc, color_name, qty, status

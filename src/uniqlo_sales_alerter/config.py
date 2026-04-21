@@ -74,6 +74,8 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("CHECK_ON_STARTUP",            ["notifications", "check_on_startup"],       "bool"),
     ("PREVIEW_CLI",                 ["notifications", "preview_cli"],            "bool"),
     ("PREVIEW_HTML",                ["notifications", "preview_html"],           "bool"),
+    ("NOTIFY_LOW_STOCK_THRESHOLD",       ["notifications", "low_stock_threshold"],       "int"),
+    ("NOTIFY_SUPPRESS_LOW_STOCK_ALERTS", ["notifications", "suppress_low_stock_alerts"], "bool"),
     # -- telegram --
     ("TELEGRAM_ENABLED",            ["notifications", "channels", "telegram", "enabled"],   "bool"),
     ("TELEGRAM_BOT_TOKEN",          ["notifications", "channels", "telegram", "bot_token"], "str"),
@@ -304,6 +306,8 @@ class NotificationConfig(BaseModel):
     preview_html: bool = False
     notify_on: Literal["all_then_new", "new_deals", "every_check"] = "all_then_new"
     check_on_startup: bool = True
+    low_stock_threshold: int = Field(default=5, ge=0)
+    suppress_low_stock_alerts: bool = False
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
 

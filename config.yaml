@@ -115,7 +115,23 @@ notifications:
   # Preview modes — local previews alongside real channels.
   # Also available via CLI: --preview-cli / --preview-html
   preview_cli: false
-  preview_html: false
+  preview_html: true
+
+  # ── Notification Triggers ───────────────────────────────────
+  # A variant is labelled "low stock" when its remaining quantity
+  # is at or below this number.  Set to 0 to disable the numeric
+  # check and fall back to the Uniqlo API's own LOW_STOCK flag
+  # (whose threshold is undocumented).  When >0, this setting is
+  # authoritative and overrides the API's flag.
+  low_stock_threshold: 3
+
+  # When true, variants that are currently low stock are kept out
+  # of the seen-set, so you only get alerted once they climb back
+  # above the threshold.  Useful to avoid being pinged for an OOS
+  # item that restocks with only 2 units (when threshold is 5).
+  # Low-stock sizes still appear inside existing notifications so
+  # you can see the full state of a deal.
+  suppress_low_stock_alerts: false
 
   channels:
     telegram:
