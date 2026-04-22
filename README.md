@@ -117,12 +117,17 @@ Requires [Python 3.11+](https://www.python.org/downloads/). On Linux/macOS you m
 ```bash
 git clone https://github.com/kequach/uniqlo-sales-alerter.git
 cd uniqlo-sales-alerter
-python -m pip install -e .
+python3 -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows
+pip install -e .
 python -m uniqlo_sales_alerter              # start the server
 python -m uniqlo_sales_alerter --preview-html  # or preview deals in browser
 ```
 
-Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract it, and run `pip install -e .` in the folder. The server runs on `http://localhost:8000`. The web UI lives at `/settings`, API docs at `/docs`.
+> **Debian / Raspberry Pi OS (Bookworm+):** If `python3 -m venv` fails, install the venv module first: `sudo apt install python3-full`
+
+Or [download the ZIP](https://github.com/kequach/uniqlo-sales-alerter/archive/refs/heads/main.zip), extract it, and run the same venv + install steps in the extracted folder. The server runs on `http://localhost:8000`. The web UI lives at `/settings`, API docs at `/docs`.
 
 </details>
 
@@ -423,6 +428,13 @@ docker run -d \
 **Git install:**
 
 ```bash
+./update.sh
+```
+
+Or manually:
+
+```bash
+source .venv/bin/activate
 git pull && pip install -e .
 sudo systemctl restart uniqlo-alerter   # if using systemd
 ```

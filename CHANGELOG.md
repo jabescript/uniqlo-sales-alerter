@@ -4,9 +4,12 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.5.0 — 2026-04-21
+## v1.5.0 — 2026-04-22
 
 ### Improvements
+
+- **Restored venv steps in "Without Docker" quick start** — the virtual environment setup was accidentally removed during earlier refactoring, causing PEP 668 errors on Debian/Raspberry Pi OS Bookworm and other externally-managed Python environments.
+- **`update.sh` script for git installs** — pulls the latest code, installs dependencies in the venv, and restarts the systemd service if running.
 
 - **Redesigned size filter controls** — clothing sizes are now checkboxes instead of a free-text input. Pants and shoe sizes use a dropdown that creates removable chips, matching the watched-variants interaction pattern. The underlying config format is unchanged.
 - **Version visible in email footer and settings UI** — the email footer now reads "Sent by Uniqlo Sales Alerter v1.5.0" (version pulled from `pyproject.toml` at runtime). The settings page subtitle also shows the version (e.g. "Sales Alerter v1.5.0 — Settings").
