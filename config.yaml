@@ -94,6 +94,10 @@ filters:
     url: https://www.uniqlo.com/de/de/products/E485255-000/00
     name: ZOOTROPOLIS UT T-Shirt
 
+  # Ignored keywords: products whose name contains any of these words
+  # (case-insensitive) are hidden from all results.
+  ignored_keywords: []
+
 # ── Server URL ─────────────────────────────────────────────────
 # Enables Ignore / Watch / Unwatch action buttons in notifications.
 # Set to the address other devices can reach, e.g. "http://192.168.1.50".

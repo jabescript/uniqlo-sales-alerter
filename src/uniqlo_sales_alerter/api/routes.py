@@ -148,7 +148,14 @@ async def update_config(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     save_config(config)
-    await reload_config(request.app)
+
+    try:
+        await reload_config(request.app)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Config saved but reload failed: {exc}",
+        ) from exc
 
     return {
         "status": "ok",

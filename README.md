@@ -209,6 +209,15 @@ filters:
 
 Product names and metadata are pulled from the API on startup.
 
+**Ignored keywords** let you filter out products by name. Any product whose name contains one of the specified words (case-insensitive substring match) is hidden from all results. Managed in the web UI with chip-style controls or directly in the config. Active ignored keywords are shown in every notification footer.
+
+```yaml
+filters:
+  ignored_keywords:
+    - "oxford hemd"
+    - "oversized"
+```
+
 ### Scheduling
 
 ```yaml
@@ -270,6 +279,7 @@ Every config option can be set via env vars for initial setup. On first startup 
 | `FILTER_SIZES_ONE_SIZE` | true/false | `filters.sizes.one_size` |
 | `FILTER_WATCHED_URLS` | comma-separated | `filters.watched_urls` (auto-migrated to `watched_variants`) |
 | `FILTER_IGNORED_IDS` | comma-separated | `filters.ignored_products` (IDs only, names blank) |
+| `FILTER_IGNORED_KEYWORDS` | comma-separated | `filters.ignored_keywords` |
 | `SERVER_URL` | string | `server_url` |
 | `PORT` | int | `port` |
 | `NOTIFY_ON` | string | `notifications.notify_on` |

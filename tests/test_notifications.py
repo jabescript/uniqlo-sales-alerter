@@ -924,3 +924,37 @@ class TestFormatRating:
     def test_zero_count_hides_even_with_average(self):
         deal = _sample_deal(rating_average=4.3, rating_count=0)
         assert format_rating(deal) is None
+
+
+class TestIgnoredKeywordsFooter:
+    """All four channels must display ignored keywords in the footer when configured."""
+
+    _KEYWORDS = ["oxford hemd", "oversized"]
+
+    def _render_all(self, keywords):
+        deal = _sample_deal()
+        return {
+            "console": _format_deal(deal, 1),
+            "telegram": _build_caption(deal, ignored_keywords=keywords),
+            "email": _build_html([deal], ignored_keywords=keywords),
+            "html_report": _build_report(
+                [deal], _REPORT_TS, ignored_keywords=keywords,
+            ),
+        }
+
+    def test_keywords_shown_in_footer(self):
+        outputs = self._render_all(self._KEYWORDS)
+        for name in ("telegram", "email", "html_report"):
+            out = outputs[name]
+            assert "Ignored keywords" in out, (
+                f"{name} should contain the 'Ignored keywords' label"
+            )
+            for kw in self._KEYWORDS:
+                assert kw in out, f"{name} should show keyword '{kw}'"
+
+    def test_no_keywords_no_footer_line(self):
+        outputs = self._render_all([])
+        for name, out in outputs.items():
+            assert "Ignored keywords" not in out, (
+                f"{name} should not show keyword label when list is empty"
+            )

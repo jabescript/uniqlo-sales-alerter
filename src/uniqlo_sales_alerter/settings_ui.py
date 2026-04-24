@@ -354,17 +354,37 @@ _TEMPLATE = """\
   <div class="section">
     <div class="section-header">Ignored Products</div>
     <div class="section-body">
-      <div class="help" style="margin-bottom:12px">
-        Products on this list are hidden from all results (any colour/size).
-        Watched variants take precedence over ignored products.
+
+      <div class="field">
+        <label>Ignored Product List</label>
+        <div class="help">
+          Products on this list are hidden from all results (any colour/size).
+          Watched variants take precedence over ignored products.
+        </div>
+        <div id="ignored-list"></div>
+        <div class="field add-row" style="margin-top:8px;margin-bottom:0">
+          <input type="text" id="ignored-add"
+            placeholder="Product URL or ID (e.g. E483049-000)"/>
+          <button type="button" class="btn btn-save"
+            onclick="addIgnored()">Add</button>
+        </div>
       </div>
-      <div id="ignored-list"></div>
-      <div class="field add-row">
-        <input type="text" id="ignored-add"
-          placeholder="Product URL or ID (e.g. E483049-000)"/>
-        <button type="button" class="btn btn-save"
-          onclick="addIgnored()">Add</button>
+
+      <div class="field">
+        <label for="ignored-keyword-add">Ignored Keywords</label>
+        <div class="help">
+          Products whose name contains any of these words are hidden
+          from all results (case-insensitive substring match).
+        </div>
+        <div class="field add-row" style="margin-bottom:0">
+          <input type="text" id="ignored-keyword-add"
+            placeholder="e.g. oxford hemd"/>
+          <button type="button" class="btn btn-save"
+            onclick="addIgnoredKeyword()">Add</button>
+        </div>
+        <div class="size-chip-wrap" id="ignored-keywords-chips"></div>
       </div>
+
     </div>
   </div>
 
@@ -417,15 +437,20 @@ _TEMPLATE = """\
         <!-- Right column: scheduled checks -->
         <div style="flex:1;min-width:0">
           <div class="field">
-            <label for="scheduled-checks">Scheduled Checks</label>
+            <label for="scheduled-check-add">Scheduled Checks</label>
             <div class="help">
-              Fixed daily times (24-hour HH:MM, one per line).
+              Fixed daily times (24-hour HH:MM).
               Always runs &mdash; <strong>not</strong> affected by quiet hours.
               Both modes can be used together; a recent scheduled check
               automatically skips the next periodic one.
             </div>
-            <textarea id="scheduled-checks" rows="4"
-              placeholder="12:00&#10;16:00&#10;20:00"></textarea>
+            <div class="field add-row" style="margin-bottom:0">
+              <input type="text" id="scheduled-check-add"
+                placeholder="e.g. 8:00" maxlength="5"/>
+              <button type="button" class="btn btn-save"
+                onclick="addScheduledCheck()">Add</button>
+            </div>
+            <div class="size-chip-wrap" id="scheduled-checks-chips"></div>
           </div>
         </div>
       </div>
@@ -823,17 +848,6 @@ _TEMPLATE = """\
   function checked(id)   { return $(id).checked; }
 
   var _TIME_RE = /^([01]?\\d|2[0-3]):[0-5]\\d$/;
-  function validateScheduledChecks() {
-    var lines = splitLines(val("scheduled-checks"));
-    for (var i = 0; i < lines.length; i++) {
-      if (!_TIME_RE.test(lines[i])) {
-        showToast("Invalid scheduled check time: '" + lines[i]
-          + "' — use 24-hour HH:MM format (e.g. 12:00)", "error");
-        return false;
-      }
-    }
-    return true;
-  }
 
   function showToast(msg, type) {
     var el = $("toast");
@@ -885,6 +899,8 @@ _TEMPLATE = """\
   /* ── watched / ignored list state ─────────────── */
   var _watchedVariants = [];
   var _ignoredProducts = [];
+  var _ignoredKeywords = [];
+  var _scheduledChecks = [];
 
   function renderWatchedList(items) {
     _watchedVariants = items || [];
@@ -973,6 +989,79 @@ _TEMPLATE = """\
     _ignoredProducts.splice(i, 1);
     renderIgnoredList(_ignoredProducts);
     _saveConfig();
+  };
+
+  /* ── ignored keywords chip helpers ─────────────── */
+  function _renderKeywordChips() {
+    var el = $("ignored-keywords-chips");
+    if (!_ignoredKeywords.length) { el.innerHTML = ""; return; }
+    el.innerHTML = _ignoredKeywords.map(function (v, i) {
+      return '<span class="size-chip">' + v +
+        '<span class="chip-x" data-kw-idx="' + i + '">&times;</span></span>';
+    }).join("");
+  }
+
+  $("ignored-keywords-chips").addEventListener("click", function (e) {
+    var x = e.target.closest(".chip-x");
+    if (!x) return;
+    var idx = parseInt(x.getAttribute("data-kw-idx"), 10);
+    _ignoredKeywords.splice(idx, 1);
+    _renderKeywordChips();
+    _saveConfig();
+  });
+
+  window.addIgnoredKeyword = function() {
+    var input = $("ignored-keyword-add");
+    var kw = input.value.trim().toLowerCase();
+    if (!kw) return;
+    if (_ignoredKeywords.indexOf(kw) !== -1) {
+      showToast("Keyword already added", "error");
+      input.value = "";
+      return;
+    }
+    _ignoredKeywords.push(kw);
+    _renderKeywordChips();
+    input.value = "";
+    _saveConfig();
+  };
+
+  /* ── scheduled checks chip helpers ──────────────── */
+  function _renderScheduledChips() {
+    var el = $("scheduled-checks-chips");
+    if (!_scheduledChecks.length) { el.innerHTML = ""; return; }
+    el.innerHTML = _scheduledChecks.map(function (v, i) {
+      return '<span class="size-chip">' + v +
+        '<span class="chip-x" data-sc-idx="' + i + '">&times;</span></span>';
+    }).join("");
+  }
+
+  $("scheduled-checks-chips").addEventListener("click", function (e) {
+    var x = e.target.closest(".chip-x");
+    if (!x) return;
+    var idx = parseInt(x.getAttribute("data-sc-idx"), 10);
+    _scheduledChecks.splice(idx, 1);
+    _renderScheduledChips();
+  });
+
+  window.addScheduledCheck = function() {
+    var input = $("scheduled-check-add");
+    var t = input.value.trim();
+    if (!t) return;
+    if (!_TIME_RE.test(t)) {
+      showToast("Invalid time '" + t + "' \\u2014 use 24-hour HH:MM (e.g. 8:00)", "error");
+      return;
+    }
+    var parts = t.split(":");
+    t = (parts[0].length === 1 ? "0" + parts[0] : parts[0]) + ":" + parts[1];
+    if (_scheduledChecks.indexOf(t) !== -1) {
+      showToast("Time already added", "error");
+      input.value = "";
+      return;
+    }
+    _scheduledChecks.push(t);
+    _scheduledChecks.sort();
+    _renderScheduledChips();
+    input.value = "";
   };
 
   function _parseProductUrl(raw) {
@@ -1064,7 +1153,8 @@ _TEMPLATE = """\
   function populate(cfg) {
     $("country").value = cfg.uniqlo.country;
     $("check-interval").value = cfg.uniqlo.check_interval_minutes;
-    $("scheduled-checks").value = (cfg.uniqlo.scheduled_checks || []).join("\\n");
+    _scheduledChecks = (cfg.uniqlo.scheduled_checks || []).slice();
+    _renderScheduledChips();
     $("sale-paths").value = (cfg.uniqlo.sale_paths || []).join(", ");
 
     var genders = (cfg.filters.gender || []).map(function(g){return g.toLowerCase()});
@@ -1086,6 +1176,8 @@ _TEMPLATE = """\
 
     renderWatchedList(cfg.filters.watched_variants || []);
     renderIgnoredList(cfg.filters.ignored_products || []);
+    _ignoredKeywords = (cfg.filters.ignored_keywords || []).slice();
+    _renderKeywordChips();
 
     $("server-url").value = cfg.server_url || "";
     $("port").value = cfg.port || 8000;
@@ -1131,7 +1223,7 @@ _TEMPLATE = """\
       uniqlo: {
         country: val("country"),
         check_interval_minutes: parseInt(val("check-interval"), 10),
-        scheduled_checks: splitLines(val("scheduled-checks")),
+        scheduled_checks: _scheduledChecks.slice(),
         sale_paths: splitCSV(val("sale-paths"))
       },
       server_url: val("server-url"),
@@ -1151,7 +1243,8 @@ _TEMPLATE = """\
           one_size: checked("sizes-one-size")
         },
         watched_variants: _watchedVariants,
-        ignored_products: _ignoredProducts
+        ignored_products: _ignoredProducts,
+        ignored_keywords: _ignoredKeywords.slice()
       },
       notifications: {
         preview_cli:  checked("preview-cli"),
@@ -1184,7 +1277,6 @@ _TEMPLATE = """\
   /* ── form submit ─────────────────────────────── */
   $("config-form").addEventListener("submit", function (e) {
     e.preventDefault();
-    if (!validateScheduledChecks()) return;
     var btn = $("save-btn");
     btn.disabled = true;
     btn.textContent = "Saving\\u2026";
@@ -1197,6 +1289,9 @@ _TEMPLATE = """\
   /* ── init ────────────────────────────────────── */
   _initSizeDropdown("sizes-pants-select", "sizes-pants-chips", _pantsChips);
   _initSizeDropdown("sizes-shoes-select", "sizes-shoes-chips", _shoesChips);
+  $("scheduled-check-add").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); addScheduledCheck(); }
+  });
   populate(CONFIG);
 })();
 </script>

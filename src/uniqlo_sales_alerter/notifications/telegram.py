@@ -44,7 +44,10 @@ def _size_link(
 
 
 def _build_caption(
-    deal: SaleItem, server_url: str = "", low_stock_threshold: int = 0,
+    deal: SaleItem,
+    server_url: str = "",
+    low_stock_threshold: int = 0,
+    ignored_keywords: list[str] | None = None,
 ) -> str:
     """Build a MarkdownV2 caption for a single deal."""
     name = _escape_md(deal.name)
@@ -84,6 +87,9 @@ def _build_caption(
     footer = f"[Uniqlo Sales Alerter]({PROJECT_URL})"
     if server_url:
         footer += f" · [Settings]({server_url}/settings)"
+    if ignored_keywords:
+        kw_text = _escape_md(", ".join(ignored_keywords))
+        footer += f"\nIgnored keywords: {kw_text}"
 
     lines = [
         f"*{name}*",
@@ -109,10 +115,12 @@ class TelegramNotifier:
         *,
         server_url: str = "",
         low_stock_threshold: int = 0,
+        ignored_keywords: list[str] | None = None,
     ) -> None:
         self._config = config
         self._server_url = server_url
         self._low_stock_threshold = low_stock_threshold
+        self._ignored_keywords = ignored_keywords or []
 
     def is_enabled(self) -> bool:
         return self._config.enabled and bool(self._config.bot_token) and bool(self._config.chat_id)
@@ -137,6 +145,7 @@ class TelegramNotifier:
                 deal,
                 server_url=self._server_url,
                 low_stock_threshold=self._low_stock_threshold,
+                ignored_keywords=self._ignored_keywords,
             )
             actions = DealActions(deal, self._server_url)
             markup = None
