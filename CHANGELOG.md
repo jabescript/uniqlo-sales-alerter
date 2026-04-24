@@ -4,6 +4,14 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
+## v1.6.0 — 2026-04-24
+
+### New features
+
+- **Ignored keywords filter** — a new `filters.ignored_keywords` list lets you hide products whose name contains any of the specified words (case-insensitive substring match). Managed via the settings UI with chip-style controls inside the "Ignored Products" section, or directly in `config.yaml`. Watched variants still take precedence. Active ignored keywords are shown in the footer of all four notification channels (email, Telegram, console, HTML report). Env-var override: `FILTER_IGNORED_KEYWORDS`.
+
+---
+
 ## v1.5.0 — 2026-04-22
 
 ### Improvements

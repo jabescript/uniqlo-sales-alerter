@@ -282,6 +282,72 @@ class TestSaleCheckerFiltering:
         assert result[0].available_sizes == ["M"]
 
 
+class TestIgnoredKeywords:
+    """Tests for the ignored_keywords filter (case-insensitive substring match)."""
+
+    @staticmethod
+    def _checker_with_keywords(keywords: list[str], **extra_filters) -> SaleChecker:
+        filters = {
+            "gender": ["men"],
+            "min_sale_percentage": 40,
+            "sizes": {"clothing": ["M", "L"]},
+            "ignored_keywords": keywords,
+            **extra_filters,
+        }
+        return SaleChecker(AppConfig.model_validate({"filters": filters}))
+
+    @staticmethod
+    def _apply(checker: SaleChecker, raw_products: list[dict]):
+        products = [_product(r) for r in raw_products]
+        sale_products = [p for p in products if p.is_on_sale]
+        return checker._apply_filters(sale_products)
+
+    def test_keyword_filters_product(self):
+        checker = self._checker_with_keywords(["oxford hemd"])
+        products = [_raw("E001", name="Oxford Hemd (Regular Fit)")]
+        assert len(self._apply(checker, products)) == 0
+
+    def test_keyword_case_insensitive(self):
+        checker = self._checker_with_keywords(["oxford hemd"])
+        products = [_raw("E001", name="OXFORD HEMD (Slim Fit)")]
+        assert len(self._apply(checker, products)) == 0
+
+    def test_keyword_partial_match(self):
+        checker = self._checker_with_keywords(["oversized"])
+        products = [_raw("E001", name="Satin Bluse (oversized, kurz, Halbarm)")]
+        assert len(self._apply(checker, products)) == 0
+
+    def test_keyword_no_match_passes(self):
+        checker = self._checker_with_keywords(["oxford hemd"])
+        products = [_raw("E001", name="Supima Cotton T-Shirt")]
+        result = self._apply(checker, products)
+        assert len(result) == 1
+        assert result[0].product_id == "E001"
+
+    def test_keyword_watched_takes_precedence(self):
+        checker = self._checker_with_keywords(
+            ["oversized"],
+            watched_variants=[
+                {"id": "E001", "color": "09", "size": "002"},
+            ],
+        )
+        products = [_raw("E001", name="Oversized Shirt", promo=95)]
+        result = self._apply(checker, products)
+        assert len(result) == 1
+        assert result[0].is_watched is True
+
+    def test_multiple_keywords(self):
+        checker = self._checker_with_keywords(["oxford", "oversized"])
+        products = [
+            _raw("E001", name="Oxford Hemd"),
+            _raw("E002", name="Oversized Jacket"),
+            _raw("E003", name="Supima Cotton T-Shirt"),
+        ]
+        result = self._apply(checker, products)
+        assert len(result) == 1
+        assert result[0].product_id == "E003"
+
+
 def _make_l2(size_name: str, size_dc: str, color_name: str, color_dc: str, l2id: str):
     """Helper to build a minimal L2 variant dict."""
     return {

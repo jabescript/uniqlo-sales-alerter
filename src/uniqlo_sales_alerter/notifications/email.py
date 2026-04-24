@@ -82,6 +82,7 @@ def _build_html(
     deals: list[SaleItem],
     server_url: str = "",
     low_stock_threshold: int = 0,
+    ignored_keywords: list[str] | None = None,
 ) -> str:
     """Build the HTML email body, expanding each deal into per-variant rows."""
     variants: list[SaleItem] = []
@@ -188,6 +189,10 @@ def _build_html(
         f' · <a href="{server_url}/settings" style="color:#999;">Settings</a>'
         if server_url else ""
     )
+    kw_line = ""
+    if ignored_keywords:
+        escaped = ", ".join(html_mod.escape(k) for k in ignored_keywords)
+        kw_line = f"<br/>Ignored keywords: {escaped}"
 
     return f"""
     <html><body>
@@ -197,7 +202,7 @@ def _build_html(
     </table>
     <p style="color:#999;font-size:12px;">
         Sent by <a href="{PROJECT_URL}"
-        style="color:#999;">Uniqlo Sales Alerter</a> v{__version__}{settings_link}
+        style="color:#999;">Uniqlo Sales Alerter</a> v{__version__}{settings_link}{kw_line}
     </p>
     </body></html>
     """
@@ -212,10 +217,12 @@ class EmailNotifier:
         *,
         server_url: str = "",
         low_stock_threshold: int = 0,
+        ignored_keywords: list[str] | None = None,
     ) -> None:
         self._config = config
         self._server_url = server_url
         self._low_stock_threshold = low_stock_threshold
+        self._ignored_keywords = ignored_keywords or []
 
     def is_enabled(self) -> bool:
         return (
@@ -261,6 +268,7 @@ class EmailNotifier:
                 deals,
                 self._server_url,
                 self._low_stock_threshold,
+                ignored_keywords=self._ignored_keywords,
             ),
             "html",
         ))

@@ -88,10 +88,12 @@ class ConsoleNotifier:
         enabled: bool = True,
         server_url: str = "",
         low_stock_threshold: int = 0,
+        ignored_keywords: list[str] | None = None,
     ) -> None:
         self._enabled = enabled
         self._server_url = server_url
         self._low_stock_threshold = low_stock_threshold
+        self._ignored_keywords = ignored_keywords or []
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -117,4 +119,7 @@ class ConsoleNotifier:
         print(_ansi("2", f"  {PROJECT_URL}"))
         if self._server_url:
             print(_ansi("2", f"  Settings: {self._server_url}/settings"))
+        if self._ignored_keywords:
+            kw_text = ", ".join(self._ignored_keywords)
+            print(_ansi("2", f"  Ignored keywords: {kw_text}"))
         print()

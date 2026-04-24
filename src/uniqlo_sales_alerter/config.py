@@ -66,6 +66,7 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("FILTER_SIZES_ONE_SIZE",       ["filters", "sizes", "one_size"],            "bool"),
     ("FILTER_WATCHED_URLS",         ["filters", "watched_urls"],                 "list"),
     ("FILTER_IGNORED_IDS",          ["filters", "ignored_products"],             "list"),
+    ("FILTER_IGNORED_KEYWORDS",     ["filters", "ignored_keywords"],             "list"),
     # -- server --
     ("SERVER_URL",                  ["server_url"],                              "str"),
     ("PORT",                        ["port"],                                    "int"),
@@ -273,6 +274,7 @@ class FilterConfig(BaseModel):
     sizes: SizeFilters = Field(default_factory=SizeFilters)
     watched_variants: list[WatchedVariant] = Field(default_factory=list)
     ignored_products: list[IgnoredProduct] = Field(default_factory=list)
+    ignored_keywords: list[str] = Field(default_factory=list)
     watched_urls: list[str] = Field(default_factory=list, exclude=True)
 
     @field_validator("ignored_products", mode="before")
@@ -281,6 +283,14 @@ class FilterConfig(BaseModel):
         """Allow env-var shorthand: plain ID strings become objects."""
         if isinstance(v, list):
             return [{"id": x} if isinstance(x, str) else x for x in v]
+        return v
+
+    @field_validator("ignored_keywords", mode="before")
+    @classmethod
+    def _coerce_keywords(cls, v: Any) -> Any:
+        """Allow env-var shorthand: a single comma-separated string becomes a list."""
+        if isinstance(v, str):
+            return [k.strip() for k in v.split(",") if k.strip()]
         return v
 
     @model_validator(mode="after")

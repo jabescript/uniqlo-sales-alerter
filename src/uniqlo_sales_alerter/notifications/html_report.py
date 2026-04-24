@@ -356,6 +356,7 @@ def _build_report(
     generated_at: datetime,
     server_url: str = "",
     low_stock_threshold: int = 0,
+    ignored_keywords: list[str] | None = None,
 ) -> str:
     """Build a self-contained HTML page styled in Uniqlo corporate identity."""
     cards = "".join(
@@ -368,6 +369,10 @@ def _build_report(
         f' style="text-decoration:none;color:inherit;">Settings</a>'
         if server_url else ""
     )
+    kw_line = ""
+    if ignored_keywords:
+        escaped = ", ".join(html_mod.escape(k) for k in ignored_keywords)
+        kw_line = f"<br/>Ignored keywords: {escaped}"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -393,7 +398,7 @@ def _build_report(
 </div>
 <footer>Powered by <a href="{PROJECT_URL}"
   style="text-decoration:none;color:inherit;"><span>UNIQLO</span> Sales Alerter</a>{
-  settings_link}</footer>
+  settings_link}{kw_line}</footer>
 </body>
 </html>"""
 
@@ -408,11 +413,13 @@ class HtmlReportNotifier:
         output_dir: str | None = None,
         server_url: str = "",
         low_stock_threshold: int = 0,
+        ignored_keywords: list[str] | None = None,
     ) -> None:
         self._enabled = enabled
         self._output_dir = output_dir
         self._server_url = server_url
         self._low_stock_threshold = low_stock_threshold
+        self._ignored_keywords = ignored_keywords or []
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -428,6 +435,7 @@ class HtmlReportNotifier:
             now,
             server_url=self._server_url,
             low_stock_threshold=self._low_stock_threshold,
+            ignored_keywords=self._ignored_keywords,
         )
 
         if self._output_dir:

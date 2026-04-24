@@ -53,6 +53,9 @@ class SaleChecker:
         self._ignored_ids: set[str] = {
             p.id.upper() for p in config.filters.ignored_products
         }
+        self._ignored_keywords: list[str] = [
+            kw.lower() for kw in config.filters.ignored_keywords if kw.strip()
+        ]
         self._seen_variants: set[str] = (
             self._load_state()
             if config.notifications.notify_on == "new_deals"
@@ -260,6 +263,11 @@ class SaleChecker:
     def _is_ignored(self, product_id: str) -> bool:
         return self._matches_any(product_id, self._ignored_ids)
 
+    def _matches_keyword(self, product_name: str) -> bool:
+        """Check if *product_name* contains any ignored keyword (case-insensitive)."""
+        name_lower = product_name.lower()
+        return any(kw in name_lower for kw in self._ignored_keywords)
+
     # ------------------------------------------------------------------
     # Filtering
     # ------------------------------------------------------------------
@@ -292,7 +300,10 @@ class SaleChecker:
         for product in products:
             is_watched = self._matches_any(product.product_id, watched)
 
-            if self._is_ignored(product.product_id) and not is_watched:
+            if not is_watched and (
+                self._is_ignored(product.product_id)
+                or self._matches_keyword(product.name)
+            ):
                 continue
 
             has_known_discount = product.is_on_sale

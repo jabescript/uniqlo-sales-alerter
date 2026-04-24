@@ -354,17 +354,37 @@ _TEMPLATE = """\
   <div class="section">
     <div class="section-header">Ignored Products</div>
     <div class="section-body">
-      <div class="help" style="margin-bottom:12px">
-        Products on this list are hidden from all results (any colour/size).
-        Watched variants take precedence over ignored products.
+
+      <div class="field">
+        <label>Ignored Product List</label>
+        <div class="help">
+          Products on this list are hidden from all results (any colour/size).
+          Watched variants take precedence over ignored products.
+        </div>
+        <div id="ignored-list"></div>
+        <div class="field add-row" style="margin-top:8px;margin-bottom:0">
+          <input type="text" id="ignored-add"
+            placeholder="Product URL or ID (e.g. E483049-000)"/>
+          <button type="button" class="btn btn-save"
+            onclick="addIgnored()">Add</button>
+        </div>
       </div>
-      <div id="ignored-list"></div>
-      <div class="field add-row">
-        <input type="text" id="ignored-add"
-          placeholder="Product URL or ID (e.g. E483049-000)"/>
-        <button type="button" class="btn btn-save"
-          onclick="addIgnored()">Add</button>
+
+      <div class="field">
+        <label for="ignored-keyword-add">Ignored Keywords</label>
+        <div class="help">
+          Products whose name contains any of these words are hidden
+          from all results (case-insensitive substring match).
+        </div>
+        <div class="field add-row" style="margin-bottom:0">
+          <input type="text" id="ignored-keyword-add"
+            placeholder="e.g. oxford hemd"/>
+          <button type="button" class="btn btn-save"
+            onclick="addIgnoredKeyword()">Add</button>
+        </div>
+        <div class="size-chip-wrap" id="ignored-keywords-chips"></div>
       </div>
+
     </div>
   </div>
 
@@ -885,6 +905,7 @@ _TEMPLATE = """\
   /* ── watched / ignored list state ─────────────── */
   var _watchedVariants = [];
   var _ignoredProducts = [];
+  var _ignoredKeywords = [];
 
   function renderWatchedList(items) {
     _watchedVariants = items || [];
@@ -972,6 +993,40 @@ _TEMPLATE = """\
   window.removeIgnored = function(i) {
     _ignoredProducts.splice(i, 1);
     renderIgnoredList(_ignoredProducts);
+    _saveConfig();
+  };
+
+  /* ── ignored keywords chip helpers ─────────────── */
+  function _renderKeywordChips() {
+    var el = $("ignored-keywords-chips");
+    if (!_ignoredKeywords.length) { el.innerHTML = ""; return; }
+    el.innerHTML = _ignoredKeywords.map(function (v, i) {
+      return '<span class="size-chip">' + v +
+        '<span class="chip-x" data-kw-idx="' + i + '">&times;</span></span>';
+    }).join("");
+  }
+
+  $("ignored-keywords-chips").addEventListener("click", function (e) {
+    var x = e.target.closest(".chip-x");
+    if (!x) return;
+    var idx = parseInt(x.getAttribute("data-kw-idx"), 10);
+    _ignoredKeywords.splice(idx, 1);
+    _renderKeywordChips();
+    _saveConfig();
+  });
+
+  window.addIgnoredKeyword = function() {
+    var input = $("ignored-keyword-add");
+    var kw = input.value.trim().toLowerCase();
+    if (!kw) return;
+    if (_ignoredKeywords.indexOf(kw) !== -1) {
+      showToast("Keyword already added", "error");
+      input.value = "";
+      return;
+    }
+    _ignoredKeywords.push(kw);
+    _renderKeywordChips();
+    input.value = "";
     _saveConfig();
   };
 
@@ -1086,6 +1141,8 @@ _TEMPLATE = """\
 
     renderWatchedList(cfg.filters.watched_variants || []);
     renderIgnoredList(cfg.filters.ignored_products || []);
+    _ignoredKeywords = (cfg.filters.ignored_keywords || []).slice();
+    _renderKeywordChips();
 
     $("server-url").value = cfg.server_url || "";
     $("port").value = cfg.port || 8000;
@@ -1151,7 +1208,8 @@ _TEMPLATE = """\
           one_size: checked("sizes-one-size")
         },
         watched_variants: _watchedVariants,
-        ignored_products: _ignoredProducts
+        ignored_products: _ignoredProducts,
+        ignored_keywords: _ignoredKeywords.slice()
       },
       notifications: {
         preview_cli:  checked("preview-cli"),

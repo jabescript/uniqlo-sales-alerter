@@ -49,11 +49,13 @@ class NotificationDispatcher:
 
         server_url = config.full_server_url
         threshold = ncfg.low_stock_threshold
+        keywords = config.filters.ignored_keywords
 
         tg = TelegramNotifier(
             channels.telegram,
             server_url=server_url,
             low_stock_threshold=threshold,
+            ignored_keywords=keywords,
         )
         notifiers.append(tg)
         logger.debug("Registered TelegramNotifier (enabled=%s)", tg.is_enabled())
@@ -62,6 +64,7 @@ class NotificationDispatcher:
             channels.email,
             server_url=server_url,
             low_stock_threshold=threshold,
+            ignored_keywords=keywords,
         )
         notifiers.append(em)
         logger.debug("Registered EmailNotifier (enabled=%s)", em.is_enabled())
@@ -73,6 +76,7 @@ class NotificationDispatcher:
                 enabled=True,
                 server_url=server_url,
                 low_stock_threshold=threshold,
+                ignored_keywords=keywords,
             ))
             logger.debug("Registered ConsoleNotifier (preview_cli)")
         if ncfg.preview_html:
@@ -80,6 +84,7 @@ class NotificationDispatcher:
                 enabled=True,
                 server_url=server_url,
                 low_stock_threshold=threshold,
+                ignored_keywords=keywords,
             ))
             logger.debug("Registered HtmlReportNotifier (preview_html)")
 

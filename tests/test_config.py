@@ -89,6 +89,16 @@ class TestAppConfig:
                 "notifications": {"low_stock_threshold": -1},
             })
 
+    def test_ignored_keywords_default(self):
+        cfg = AppConfig()
+        assert cfg.filters.ignored_keywords == []
+
+    def test_ignored_keywords_configured(self):
+        cfg = AppConfig.model_validate({
+            "filters": {"ignored_keywords": ["oxford hemd", "oversized"]},
+        })
+        assert cfg.filters.ignored_keywords == ["oxford hemd", "oversized"]
+
 
 class TestLoadConfig:
     def test_load_from_yaml(self, tmp_path: Path):
