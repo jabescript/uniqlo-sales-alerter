@@ -11,10 +11,10 @@ jobs:
       - name: Checkout Forked Repository
         uses: actions/checkout@v3
         with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Add Upstream Remote
-        run: git remote add upstream https://github.com/original-repo-owner/original-repo.git
+        run: git remote add upstream https://github.com/kequach/uniqlo-sales-alerter.git
 
       - name: Fetch Upstream Changes
         run: git fetch upstream
@@ -22,5 +22,5 @@ jobs:
       - name: Merge Changes and Push
         run: |
           git checkout main
-          git merge upstream/main
+          git merge --allow-unrelated-histories upstream/main
           git push origin main
