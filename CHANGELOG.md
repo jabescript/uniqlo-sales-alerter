@@ -4,41 +4,11 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.6.0 — 2026-04-24
+## v1.5.0 — 2026-04-24
 
 ### New features
 
 - **Ignored keywords filter** — a new `filters.ignored_keywords` list lets you hide products whose name contains any of the specified words (case-insensitive substring match). Managed via the settings UI with chip-style controls inside the "Ignored Products" section, or directly in `config.yaml`. Watched variants still take precedence. Active ignored keywords are shown in the footer of all four notification channels (email, Telegram, console, HTML report). Env-var override: `FILTER_IGNORED_KEYWORDS`.
-
-### Improvements
-
-- **Scheduled checks use chip-style input** — the settings UI now uses a single-line text field with add/remove chips (like ignored keywords) instead of a multi-line textarea. Enter or the Add button appends a time; the `×` on each chip removes it. Times are normalised to `HH:MM` and sorted chronologically.
-
-### Bug fixes
-
-- **YAML sexagesimal time values handled** — unquoted times like `8:00` in `config.yaml` are parsed by PyYAML as base-60 integers (480). The validator now detects and converts these back to `HH:MM`, so quoting is no longer required.
-- **Config reload errors return JSON** — if `reload_config` fails after saving, the PUT endpoint now returns a proper JSON error instead of a plain-text 500, preventing the "JSON.parse: unexpected character" browser error.
-
----
-
-## v1.5.0 — 2026-04-22
-
-### Improvements
-
-- **Restored venv steps in "Without Docker" quick start** — the virtual environment setup was accidentally removed during earlier refactoring, causing PEP 668 errors on Debian/Raspberry Pi OS Bookworm and other externally-managed Python environments.
-- **`update.sh` script for git installs** — pulls the latest code, installs dependencies in the venv, and restarts the systemd service if running.
-
-- **Redesigned size filter controls** — clothing sizes are now checkboxes instead of a free-text input. Pants and shoe sizes use a dropdown that creates removable chips, matching the watched-variants interaction pattern. The underlying config format is unchanged.
-- **Version visible in email footer and settings UI** — the email footer now reads "Sent by Uniqlo Sales Alerter v1.5.0" (version pulled from `pyproject.toml` at runtime). The settings page subtitle also shows the version (e.g. "Sales Alerter v1.5.0 — Settings").
-
-### Bug fixes
-
-- **Out-of-stock items no longer trigger notifications** — stock verification now uses the `CountryCapabilities.stock_api` mapping to decide behaviour per country. Countries with reliable stock data (`stock_api="v5"`) properly drop items when all sizes are out of stock. Countries with unreliable stock data (`stock_api="none"`, i.e. PH/TH) skip the stock call but still fetch L2 variant data to build accurate product URLs — items are never dropped for these countries.
-- **PH/TH product URLs fixed** — Philippines and Thailand storefronts use a different URL format (`colorCode`/`sizeCode` without a price-group path segment). A new `url_style` capability drives `build_product_url` so each country gets the correct format. URL parsing (`parse_uniqlo_url`, variant keys, settings UI) now handles both formats.
-- **PH missing sale items** — added `v3_ltd` (limitedOffer) to PH's `listing_sources` so the full sale catalogue is retrieved, not just the `discount` flagged items.
-
-### New features
-
 - **Per-variant stock count in every notification** — console, email, Telegram, and the HTML report now show the exact number of units remaining next to each size chip (e.g. `M (12)`). The data comes from the v5 stock API that was already being called for in-stock filtering.
 - **Low-stock badge** — variants whose quantity is at or below a configurable threshold are marked `(3, low stock)` and styled in red in each channel. The user threshold is authoritative when positive; set it to `0` to fall back to the Uniqlo API's own `LOW_STOCK` flag as the sole signal.
 - **Opt-in low-stock alert suppression** — a new `notifications.suppress_low_stock_alerts` toggle keeps low-stock variants out of the seen-set so they don't fire an alert. The typical use case: an out-of-stock item restocks with only 2 units while your threshold is 3 — normally that would retrigger a notification, but with the toggle on it's quietly deferred until the quantity climbs back above the threshold. Low-stock sizes still appear inside other notifications so you see the full state of a deal.
@@ -52,10 +22,26 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Improvements
 
+- **Scheduled checks use chip-style input** — the settings UI now uses a single-line text field with add/remove chips (like ignored keywords) instead of a multi-line textarea. Enter or the Add button appends a time; the `×` on each chip removes it. Times are normalised to `HH:MM` and sorted chronologically.
+- **Restored venv steps in "Without Docker" quick start** — the virtual environment setup was accidentally removed during earlier refactoring, causing PEP 668 errors on Debian/Raspberry Pi OS Bookworm and other externally-managed Python environments.
+- **`update.sh` script for git installs** — pulls the latest code, installs dependencies in the venv, and restarts the systemd service if running.
+- **Redesigned size filter controls** — clothing sizes are now checkboxes instead of a free-text input. Pants and shoe sizes use a dropdown that creates removable chips, matching the watched-variants interaction pattern. The underlying config format is unchanged.
+- **Version visible in email footer and settings UI** — the email footer now reads "Sent by Uniqlo Sales Alerter v1.5.0" (version pulled from `pyproject.toml` at runtime). The settings page subtitle also shows the version (e.g. "Sales Alerter v1.5.0 — Settings").
 - **HTML report: inline stock counts** — stock counts now render inside the size chip as subtle secondary text instead of as a separate badge. Low-stock chips get a filled red background so they stand out without extra visual clutter.
 - **Quieter INFO logs** — demoted 16 verbose or redundant log lines to DEBUG across config, dispatcher, email, sale checker, and Uniqlo client. A typical sale-check cycle now produces ~3 INFO lines (fetch summary, result, delivery) instead of ~10. Internal details like notifier registration, state file loading, quiet-hour skips, and per-endpoint pagination totals are still available at DEBUG level. APScheduler's per-job "executed successfully" messages are also suppressed.
 - **Settings UI log timing** — the "Settings UI: ..." message now appears at the end of lifespan startup (right before uvicorn starts serving) instead of before `uvicorn.run()` begins.
 - **Favicon** — the settings UI and HTML report pages now show an inline SVG price-tag icon in the browser tab.
+
+### Bug fixes
+
+- **YAML sexagesimal time values handled** — unquoted times like `8:00` in `config.yaml` are parsed by PyYAML as base-60 integers (480). The validator now detects and converts these back to `HH:MM`, so quoting is no longer required.
+- **Config reload errors return JSON** — if `reload_config` fails after saving, the PUT endpoint now returns a proper JSON error instead of a plain-text 500, preventing the "JSON.parse: unexpected character" browser error.
+- **Out-of-stock items no longer trigger notifications** — stock verification now uses the `CountryCapabilities.stock_api` mapping to decide behaviour per country. Countries with reliable stock data (`stock_api="v5"`) properly drop items when all sizes are out of stock. Countries with unreliable stock data (`stock_api="none"`, i.e. PH/TH) skip the stock call but still fetch L2 variant data to build accurate product URLs — items are never dropped for these countries.
+- **PH/TH product URLs fixed** — Philippines and Thailand storefronts use a different URL format (`colorCode`/`sizeCode` without a price-group path segment). A new `url_style` capability drives `build_product_url` so each country gets the correct format. URL parsing (`parse_uniqlo_url`, variant keys, settings UI) now handles both formats.
+- **PH missing sale items** — added `v3_ltd` (limitedOffer) to PH's `listing_sources` so the full sale catalogue is retrieved, not just the `discount` flagged items.
+- **Wrong product image for colour variants** — when stock verification picked a colour not present in the listing API's image map, notifications fell back to the representative colour's image (e.g. showing a black jacket instead of the off-white one linked in the product URL). `resolve_color_image` now derives the correct image URL from the Uniqlo CDN naming pattern when the exact colour code is missing from the map. Removed unused `image_url_for_color` from `UniqloProduct` (superseded by `resolve_color_image`).
+- **YAML comments preserved on save** — `save_config` was stripping comments that appear between block sequences and the next mapping key (e.g. "# Ignored products…", "# Server URL…"). ruamel.yaml stores these on the last sequence item's internal comment attributes; the merge logic now transplants them to the replacement sequence.
+- **`watched_urls` no longer reappears in config.yaml** — the legacy migration field was included in `model_dump()` output, causing `save_config` to write `watched_urls: []` back on every save. Fixed with `exclude=True` on the Pydantic field.
 
 ### Code quality
 
@@ -67,12 +53,6 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 ### Docs
 
 - **README**: expanded the old *Notification modes* section into a richer *How notifications are triggered* walkthrough covering first-seen, size restocks, OOS silent-drops, restock re-fires, discount changes, quantity fluctuations, and the new opt-in low-stock crossing. Added the full variant-key format and a PH/TH caveat.
-
-### Bug fixes
-
-- **Wrong product image for colour variants** — when stock verification picked a colour not present in the listing API's image map, notifications fell back to the representative colour's image (e.g. showing a black jacket instead of the off-white one linked in the product URL). `resolve_color_image` now derives the correct image URL from the Uniqlo CDN naming pattern when the exact colour code is missing from the map. Removed unused `image_url_for_color` from `UniqloProduct` (superseded by `resolve_color_image`).
-- **YAML comments preserved on save** — `save_config` was stripping comments that appear between block sequences and the next mapping key (e.g. "# Ignored products…", "# Server URL…"). ruamel.yaml stores these on the last sequence item's internal comment attributes; the merge logic now transplants them to the replacement sequence.
-- **`watched_urls` no longer reappears in config.yaml** — the legacy migration field was included in `model_dump()` output, causing `save_config` to write `watched_urls: []` back on every save. Fixed with `exclude=True` on the Pydantic field.
 
 ---
 
