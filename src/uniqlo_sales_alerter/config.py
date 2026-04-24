@@ -166,7 +166,18 @@ class UniqloConfig(BaseModel):
             return v
         cleaned: list[str] = []
         for entry in v:
-            entry = str(entry).strip()
+            if isinstance(entry, int):
+                # PyYAML (YAML 1.1) parses "8:00" as sexagesimal → 480
+                hours, minutes = divmod(entry, 60)
+                if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                    entry = f"{hours:02d}:{minutes:02d}"
+                else:
+                    raise ValueError(
+                        f"Invalid scheduled check time (numeric {entry}) — "
+                        f"expected 24-hour HH:MM format (e.g. '12:00')"
+                    ) from None
+            else:
+                entry = str(entry).strip()
             if not entry:
                 continue
             try:

@@ -10,6 +10,15 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 - **Ignored keywords filter** — a new `filters.ignored_keywords` list lets you hide products whose name contains any of the specified words (case-insensitive substring match). Managed via the settings UI with chip-style controls inside the "Ignored Products" section, or directly in `config.yaml`. Watched variants still take precedence. Active ignored keywords are shown in the footer of all four notification channels (email, Telegram, console, HTML report). Env-var override: `FILTER_IGNORED_KEYWORDS`.
 
+### Improvements
+
+- **Scheduled checks use chip-style input** — the settings UI now uses a single-line text field with add/remove chips (like ignored keywords) instead of a multi-line textarea. Enter or the Add button appends a time; the `×` on each chip removes it. Times are normalised to `HH:MM` and sorted chronologically.
+
+### Bug fixes
+
+- **YAML sexagesimal time values handled** — unquoted times like `8:00` in `config.yaml` are parsed by PyYAML as base-60 integers (480). The validator now detects and converts these back to `HH:MM`, so quoting is no longer required.
+- **Config reload errors return JSON** — if `reload_config` fails after saving, the PUT endpoint now returns a proper JSON error instead of a plain-text 500, preventing the "JSON.parse: unexpected character" browser error.
+
 ---
 
 ## v1.5.0 — 2026-04-22
