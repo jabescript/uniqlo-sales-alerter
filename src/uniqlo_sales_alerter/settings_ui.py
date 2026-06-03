@@ -720,6 +720,20 @@ _TEMPLATE = """\
         </label>
       </div>
 
+      <div class="field">
+        <label for="state-retention-days">State Retention (days)</label>
+        <div class="help">
+          How long to remember variants that have disappeared
+          (went out of stock or no longer match) before forgetting
+          them. Once forgotten, the next time they reappear they
+          will be reported as &ldquo;new&rdquo; again.
+          Set to <code>0</code> to disable pruning and keep history forever.
+          Variants currently in stock are never pruned.
+        </div>
+        <input type="number" id="state-retention-days"
+          min="0" step="1" placeholder="30"/>
+      </div>
+
       <!-- Telegram -->
       <div class="subsection">
         <div class="subsection-header">
@@ -1196,6 +1210,9 @@ _TEMPLATE = """\
     $("low-stock-threshold").value =
       cfg.notifications.low_stock_threshold != null
         ? cfg.notifications.low_stock_threshold : 3;
+    $("state-retention-days").value =
+      cfg.notifications.state_retention_days != null
+        ? cfg.notifications.state_retention_days : 30;
 
     var tg = cfg.notifications.channels.telegram;
     $("telegram-enabled").checked = !!tg.enabled;
@@ -1253,6 +1270,7 @@ _TEMPLATE = """\
         check_on_startup: checked("check-on-startup"),
         low_stock_threshold: parseInt(val("low-stock-threshold"), 10) || 0,
         suppress_low_stock_alerts: checked("suppress-low-stock-alerts"),
+        state_retention_days: parseInt(val("state-retention-days"), 10) || 0,
         channels: {
           telegram: {
             enabled:   checked("telegram-enabled"),

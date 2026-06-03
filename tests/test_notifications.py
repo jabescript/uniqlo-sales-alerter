@@ -1003,3 +1003,49 @@ class TestDealActionsUnwatch:
         deal = _sample_deal(is_watched=True)
         actions = DealActions(deal, "")
         assert actions.unwatch_urls == []
+
+
+class TestChangeTagRendering:
+    """Per-variant change tags surface in every notification channel."""
+
+    @staticmethod
+    def _deal_with_changes():
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        return _sample_deal(
+            available_sizes=["S", "M", "L"],
+            variant_changes=[
+                [ChangeReason.NEW],
+                [ChangeReason.PRICE_DROP],
+                [ChangeReason.RESTOCKED, ChangeReason.PRICE_RISE],
+            ],
+            previous_discount=20.0,
+            discount_percentage=50.0,
+        )
+
+    @pytest.mark.parametrize("channel", list(_RENDERERS))
+    def test_channel_renders_change_tags(self, channel):
+        deal = self._deal_with_changes()
+        rendered = _RENDERERS[channel](deal)
+        assert "NEW" in rendered
+        assert "PRICE DROP" in rendered
+        assert "20% \u2192 50%" in rendered  # arrow + before/after
+        assert "RESTOCKED" in rendered
+
+    @pytest.mark.parametrize("channel", list(_RENDERERS))
+    def test_no_tag_when_no_changes(self, channel):
+        deal = _sample_deal()
+        rendered = _RENDERERS[channel](deal)
+        # Plain deals without variant_changes must not have leftover labels.
+        assert "PRICE DROP" not in rendered
+        assert "RESTOCKED" not in rendered
+
+    def test_format_change_tags_orders_and_labels(self):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        from uniqlo_sales_alerter.notifications.base import format_change_tags
+        tags = format_change_tags(
+            [ChangeReason.PRICE_DROP, ChangeReason.NEW],
+            previous_discount=30, new_discount=60,
+        )
+        # NEW comes first per render order.
+        assert tags == ["NEW", "PRICE DROP 30% \u2192 60%"]
+

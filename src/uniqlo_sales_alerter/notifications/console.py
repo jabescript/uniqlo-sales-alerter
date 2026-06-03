@@ -12,6 +12,7 @@ from uniqlo_sales_alerter.notifications.base import (
     format_rating,
     format_stock_suffix,
     unique_colors,
+    variant_change_text,
 )
 
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -66,7 +67,13 @@ def _format_deal(
             )
         else:
             stock_colored = ""
-        lines.append(f"     {_ansi('36', size):>8s}  {url}{stock_colored}")
+        change_text = variant_change_text(deal, i)
+        change_colored = (
+            f"  {_ansi('33;1', f'[{change_text}]')}" if change_text else ""
+        )
+        lines.append(
+            f"     {_ansi('36', size):>8s}  {url}{stock_colored}{change_colored}"
+        )
     actions = DealActions(deal, server_url)
     if actions.ignore_url:
         lines.append(f"     {_ansi('2', f'[Ignore] {actions.ignore_url}')}")

@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from urllib.parse import quote
 
-from uniqlo_sales_alerter.models.products import SaleItem, is_low_stock, parse_variant_codes
+from uniqlo_sales_alerter.models.products import (
+    ChangeReason,
+    SaleItem,
+    is_low_stock,
+    parse_variant_codes,
+)
 
 PROJECT_URL = "https://github.com/kequach/uniqlo-sales-alerter"
 
@@ -168,6 +173,78 @@ def resolve_color_image(
 def unique_colors(deal: SaleItem) -> list[str]:
     """Deduplicated, non-empty colour names preserving insertion order."""
     return list(dict.fromkeys(name for name in deal.color_names if name))
+
+
+# ---------------------------------------------------------------------------
+# Per-variant change tags
+# ---------------------------------------------------------------------------
+
+# Render order — most informative first so the tag bar reads predictably.
+_REASON_ORDER: tuple[ChangeReason, ...] = (
+    ChangeReason.NEW,
+    ChangeReason.NEW_VARIANT,
+    ChangeReason.RESTOCKED,
+    ChangeReason.BACK_ABOVE_LOW,
+    ChangeReason.PRICE_DROP,
+    ChangeReason.PRICE_RISE,
+)
+
+_REASON_LABELS: dict[ChangeReason, str] = {
+    ChangeReason.NEW: "NEW",
+    ChangeReason.NEW_VARIANT: "NEW VARIANT",
+    ChangeReason.RESTOCKED: "RESTOCKED",
+    ChangeReason.BACK_ABOVE_LOW: "BACK IN STOCK",
+    ChangeReason.PRICE_DROP: "PRICE DROP",
+    ChangeReason.PRICE_RISE: "PRICE RISE",
+}
+
+
+def format_change_tags(
+    reasons: list[ChangeReason],
+    *,
+    previous_discount: float | None = None,
+    new_discount: float | None = None,
+) -> list[str]:
+    """Render *reasons* into plain-text labels (one per reason).
+
+    For PRICE_DROP/PRICE_RISE, when both discounts are known the label is
+    augmented with ``"X% → Y%"``.  Channels join the returned labels
+    with their own separator (e.g. ``" · "``).
+    """
+    out: list[str] = []
+    seen: set[ChangeReason] = set()
+    ordered = sorted(
+        reasons,
+        key=lambda r: _REASON_ORDER.index(r) if r in _REASON_ORDER else 99,
+    )
+    for r in ordered:
+        if r in seen:
+            continue
+        seen.add(r)
+        label = _REASON_LABELS.get(r, r.value)
+        if r in (ChangeReason.PRICE_DROP, ChangeReason.PRICE_RISE) \
+                and previous_discount is not None and new_discount is not None:
+            label = f"{label} {previous_discount:.0f}% \u2192 {new_discount:.0f}%"
+        out.append(label)
+    return out
+
+
+def variant_change_text(deal: SaleItem, idx: int) -> str:
+    """Convenience: comma-free joined tag string for variant *idx*.
+
+    Returns ``""`` when there are no change reasons for this variant.
+    """
+    if idx >= len(deal.variant_changes):
+        return ""
+    reasons = deal.variant_changes[idx]
+    if not reasons:
+        return ""
+    tags = format_change_tags(
+        reasons,
+        previous_discount=deal.previous_discount,
+        new_discount=deal.discount_percentage if deal.has_known_discount else None,
+    )
+    return " \u00b7 ".join(tags)
 
 
 @runtime_checkable

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -13,6 +14,31 @@ from pydantic import BaseModel, Field, field_validator
 _DEFAULT_CURRENCY = "€"
 _LOW_STOCK_STATUS = "LOW_STOCK"
 _ALPHA_PREFIX_RE = re.compile(r"^[A-Z]+")
+
+
+class ChangeReason(str, Enum):
+    """Why a variant is being reported in a notification."""
+
+    NEW = "NEW"
+    NEW_VARIANT = "NEW_VARIANT"
+    PRICE_DROP = "PRICE_DROP"
+    PRICE_RISE = "PRICE_RISE"
+    RESTOCKED = "RESTOCKED"
+    BACK_ABOVE_LOW = "BACK_ABOVE_LOW"
+
+
+def stock_bucket(qty: int, status: str, threshold: int) -> str:
+    """Classify a variant's stock into ``"in"``, ``"low"``, or ``"oos"``.
+
+    ``oos`` is returned only when quantity data is missing or zero; any
+    positive quantity is either ``low`` (per :func:`is_low_stock`) or
+    ``in``.  Used by the state diff to detect restock transitions.
+    """
+    if qty <= 0 and status != _LOW_STOCK_STATUS:
+        return "oos"
+    if is_low_stock(qty, status, threshold):
+        return "low"
+    return "in"
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +312,8 @@ class SaleItem(BaseModel):
     rating_count: int | None = None
     is_watched: bool = False
     has_known_discount: bool = True
+    variant_changes: list[list[ChangeReason]] = Field(default_factory=list)
+    previous_discount: float | None = None
 
     def variant_at(self, index: int) -> VariantInfo:
         """Return variant data at *index* with safe defaults for sparse lists."""

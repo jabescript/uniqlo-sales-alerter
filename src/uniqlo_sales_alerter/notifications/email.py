@@ -17,6 +17,7 @@ from uniqlo_sales_alerter.notifications.base import (
     format_rating,
     format_stock_suffix,
     resolve_color_image,
+    variant_change_text,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +42,10 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
     for i, (sz, url) in enumerate(zip(deal.available_sizes, deal.product_urls)):
         v = deal.variant_at(i)
         img = resolve_color_image(url, deal.color_images, deal.image_url)
+        var_changes = (
+            [deal.variant_changes[i]]
+            if i < len(deal.variant_changes) else []
+        )
         variants.append(deal.model_copy(update={
             "available_sizes": [sz],
             "product_urls": [url],
@@ -48,29 +53,40 @@ def _expand_to_variants(deal: SaleItem) -> list[SaleItem]:
             "stock_quantities": [v.quantity],
             "stock_statuses": [v.status],
             "image_url": img,
+            "variant_changes": var_changes,
         }))
     return variants
 
 
 def _size_link_html(
     size_label: str, url: str, qty: int, status: str, threshold: int,
+    change_text: str = "",
 ) -> str:
-    """Render a size link with an optional stock-suffix span."""
+    """Render a size link with optional stock-suffix and change-tag spans."""
     safe_sz = html_mod.escape(size_label)
     anchor = f'<a href="{url}">{safe_sz}</a>'
     stock_text, is_low = format_stock_suffix(qty, status, threshold)
-    if not stock_text:
-        return anchor
-    if is_low:
-        return (
-            f'{anchor} <span style="color:#fff;background:#c0392b;'
-            f'font-weight:600;font-size:.85em;padding:1px 5px;'
-            f'border-radius:2px;">({html_mod.escape(stock_text)})</span>'
+    parts = [anchor]
+    if stock_text:
+        if is_low:
+            parts.append(
+                f'<span style="color:#fff;background:#c0392b;'
+                f'font-weight:600;font-size:.85em;padding:1px 5px;'
+                f'border-radius:2px;">({html_mod.escape(stock_text)})</span>'
+            )
+        else:
+            parts.append(
+                f'<span style="color:#999;font-size:.85em;">'
+                f'({html_mod.escape(stock_text)})</span>'
+            )
+    if change_text:
+        parts.append(
+            f'<span style="color:#fff;background:#ED1D24;'
+            f'font-weight:700;font-size:.75em;padding:1px 6px;'
+            f'border-radius:2px;letter-spacing:.04em;">'
+            f'{html_mod.escape(change_text)}</span>'
         )
-    return (
-        f'{anchor} <span style="color:#999;font-size:.85em;">'
-        f'({html_mod.escape(stock_text)})</span>'
-    )
+    return " ".join(parts)
 
 
 def _build_html(
@@ -110,6 +126,7 @@ def _build_html(
                 variant.variant_at(i).quantity,
                 variant.variant_at(i).status,
                 low_stock_threshold,
+                variant_change_text(variant, i),
             )
             for i, (size_label, url) in enumerate(
                 zip(variant.available_sizes, variant.product_urls),

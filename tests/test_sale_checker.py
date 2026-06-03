@@ -1308,3 +1308,200 @@ class TestNewDealDedup:
         state = tmp_path / ".seen.json"
         _, new_keys = self._run_check(cfg, self._build_item(3), state)
         assert new_keys == []
+
+
+class TestChangeClassification:
+    """End-to-end coverage of per-variant change reasons.
+
+    Uses ``notify_on: "new_deals"`` so each ``SaleChecker`` instance
+    loads the prior state from disk and the diff path is exercised.
+    """
+
+    _URL_M = "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004"
+    _URL_L = "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005"
+    _URL_NAVY_M = "https://x.com/products/E001/00?colorDisplayCode=69&sizeDisplayCode=004"
+
+    @staticmethod
+    def _cfg(**overrides) -> AppConfig:
+        notif = {"notify_on": "new_deals"}
+        notif.update(overrides)
+        return AppConfig.model_validate({"notifications": notif})
+
+    @staticmethod
+    def _item(
+        *, discount: float = 40.0,
+        sizes: list[str] | None = None,
+        urls: list[str] | None = None,
+        qtys: list[int] | None = None,
+        statuses: list[str] | None = None,
+    ):
+        sizes = sizes or ["M"]
+        urls = urls or [TestChangeClassification._URL_M]
+        qtys = qtys or [10] * len(sizes)
+        statuses = statuses or ["IN_STOCK"] * len(sizes)
+        return sample_deal(
+            product_id="E001",
+            discount_percentage=discount,
+            sale_price=100 * (1 - discount / 100),
+            available_sizes=sizes,
+            product_urls=urls,
+            stock_quantities=qtys,
+            stock_statuses=statuses,
+        )
+
+    async def _run(self, cfg: AppConfig, item, state_file: Path):
+        checker = SaleChecker(cfg, state_file=state_file)
+        with (
+            patch.object(
+                checker, "_apply_filters", return_value=[item],
+            ),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            return await checker.check()
+
+    @pytest.mark.asyncio
+    async def test_first_run_tags_new(self, tmp_path: Path):
+        result = await self._run(
+            self._cfg(), self._item(discount=40), tmp_path / "s.json",
+        )
+        assert len(result.new_deals) == 1
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert result.new_deals[0].variant_changes == [[ChangeReason.NEW]]
+
+    @pytest.mark.asyncio
+    async def test_legacy_state_file_loads_without_false_new(
+        self, tmp_path: Path,
+    ):
+        """Old-format state file (just ``variants``) must not trigger NEW."""
+        state = tmp_path / "s.json"
+        state.write_text(
+            json.dumps({"variants": ["E001:09:004:40"]}) + "\n",
+            encoding="utf-8",
+        )
+        result = await self._run(self._cfg(), self._item(discount=40), state)
+        assert result.new_deals == []
+
+    @pytest.mark.asyncio
+    async def test_price_drop_tagged_and_notifies(self, tmp_path: Path):
+        state = tmp_path / "s.json"
+        await self._run(self._cfg(), self._item(discount=20), state)
+        result = await self._run(self._cfg(), self._item(discount=50), state)
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert len(result.new_deals) == 1
+        deal = result.new_deals[0]
+        assert ChangeReason.PRICE_DROP in deal.variant_changes[0]
+        assert deal.previous_discount == 20.0
+
+    @pytest.mark.asyncio
+    async def test_price_rise_tag_only_not_notified(self, tmp_path: Path):
+        """A bare PRICE_RISE must NOT add the item to new_deals."""
+        state = tmp_path / "s.json"
+        await self._run(self._cfg(), self._item(discount=50), state)
+        result = await self._run(self._cfg(), self._item(discount=30), state)
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert result.new_deals == []
+        # The matching item still exists and carries the tag.
+        deal = result.matching_deals[0]
+        assert ChangeReason.PRICE_RISE in deal.variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_restocked_after_disappear(self, tmp_path: Path):
+        """present -> absent (auto-OOS) -> present again -> RESTOCKED."""
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        await self._run(self._cfg(), self._item(discount=40), state)
+        # Run with no matching items: variant disappears -> auto-OOS write.
+        checker = SaleChecker(self._cfg(), state_file=state)
+        with (
+            patch.object(checker, "_apply_filters", return_value=[]),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            await checker.check()
+        # Reappears -> RESTOCKED.
+        result = await self._run(self._cfg(), self._item(discount=40), state)
+        assert len(result.new_deals) == 1
+        assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_back_above_low_transition(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(low_stock_threshold=5)
+        await self._run(cfg, self._item(discount=40, qtys=[2]), state)
+        result = await self._run(cfg, self._item(discount=40, qtys=[20]), state)
+        assert ChangeReason.BACK_ABOVE_LOW in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_new_variant_tagged_only_on_added_variant(
+        self, tmp_path: Path,
+    ):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        await self._run(
+            self._cfg(),
+            self._item(discount=40, sizes=["M"], urls=[self._URL_M]),
+            state,
+        )
+        result = await self._run(
+            self._cfg(),
+            self._item(
+                discount=40,
+                sizes=["M", "L"],
+                urls=[self._URL_M, self._URL_L],
+                qtys=[10, 10],
+                statuses=["IN_STOCK", "IN_STOCK"],
+            ),
+            state,
+        )
+        assert len(result.new_deals) == 1
+        deal = result.new_deals[0]
+        assert deal.variant_changes[0] == []  # M was already seen
+        assert ChangeReason.NEW_VARIANT in deal.variant_changes[1]
+
+    @pytest.mark.asyncio
+    async def test_ttl_prunes_only_disappeared_variants(
+        self, tmp_path: Path,
+    ):
+        """A 31-day-old observed variant is kept; an oos one is dropped."""
+        from datetime import datetime, timedelta, timezone
+        state = tmp_path / "s.json"
+        old_ts = (
+            datetime.now(timezone.utc) - timedelta(days=31)
+        ).isoformat()
+        state.write_text(
+            json.dumps({
+                "variants": ["E001:09:004:40", "E999:01:001:30"],
+                "stock_buckets": {
+                    "E001:09:004": "in",   # observed, ancient — must be kept
+                    "E999:01:001": "oos",  # disappeared, ancient — must drop
+                },
+                "last_seen": {
+                    "E001:09:004": old_ts,
+                    "E999:01:001": old_ts,
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        cfg = self._cfg(state_retention_days=30)
+        await self._run(cfg, self._item(discount=40), state)
+        data = json.loads(state.read_text(encoding="utf-8"))
+        assert "E001:09:004" in data["stock_buckets"], (
+            "observed variants must NOT be pruned regardless of age"
+        )
+        assert "E999:01:001" not in data["stock_buckets"], (
+            "oos variants older than the TTL must be pruned"
+        )
+        assert "E999:01:001:30" not in data["variants"]
+
+
+

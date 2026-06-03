@@ -18,6 +18,7 @@ from uniqlo_sales_alerter.notifications.base import (
     format_stock_suffix,
     resolve_color_image,
     unique_colors,
+    variant_change_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,21 @@ _REPORT_CSS = """\
   .size-chip.low-stock .stock-qty {
     opacity: .85;
   }
+  .size-chip .change-tag {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    background: #fff;
+    color: var(--uq-red);
+    border-radius: 2px;
+    font-size: .62rem;
+    font-weight: 800;
+    letter-spacing: .05em;
+  }
+  .size-chip:not(.low-stock) .change-tag {
+    background: var(--uq-red);
+    color: #fff;
+  }
 
   /* ── Watch chip (per-size star) ───────────────── */
   .watch-chip {
@@ -261,7 +277,15 @@ def _render_card(
             variant.quantity, variant.status, low_stock_threshold,
         )
         css_class = "size-chip low-stock" if is_low else "size-chip"
-        return f'<a class="{css_class}" href="{url}" target="_blank">{size_label}{stock_span}</a>'
+        change_text = variant_change_text(deal, i)
+        change_span = (
+            f'<span class="change-tag">{html_mod.escape(change_text)}</span>'
+            if change_text else ""
+        )
+        return (
+            f'<a class="{css_class}" href="{url}" target="_blank">'
+            f'{size_label}{stock_span}{change_span}</a>'
+        )
 
     actions = DealActions(deal, server_url)
     if actions.unwatch_urls:

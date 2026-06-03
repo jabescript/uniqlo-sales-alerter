@@ -14,6 +14,7 @@ from uniqlo_sales_alerter.notifications.base import (
     format_stock_suffix,
     resolve_color_image,
     unique_colors,
+    variant_change_text,
 )
 
 if TYPE_CHECKING:
@@ -31,15 +32,16 @@ def _escape_md(text: str) -> str:
 
 def _size_link(
     size_label: str, url: str, qty: int, status: str, threshold: int,
+    change_tag: str = "",
 ) -> str:
     """Render a single size as a MarkdownV2 link with optional stock suffix."""
     stock_text, is_low = format_stock_suffix(qty, status, threshold)
-    if not stock_text:
-        label = _escape_md(size_label)
-    elif is_low:
-        label = _escape_md(f"{size_label} · {stock_text} ⚠")
-    else:
-        label = _escape_md(f"{size_label} · {stock_text}")
+    parts = [size_label]
+    if stock_text:
+        parts.append(stock_text + (" ⚠" if is_low else ""))
+    if change_tag:
+        parts.append(change_tag)
+    label = _escape_md(" · ".join(parts))
     return f"[{label}]({url})"
 
 
@@ -78,6 +80,7 @@ def _build_caption(
             deal.variant_at(i).quantity,
             deal.variant_at(i).status,
             low_stock_threshold,
+            variant_change_text(deal, i),
         )
         for i, (size_label, url) in enumerate(
             zip(deal.available_sizes, deal.product_urls),

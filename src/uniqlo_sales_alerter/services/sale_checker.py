@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
-from uniqlo_sales_alerter.models.products import SaleCheckResult, UniqloProduct
+from uniqlo_sales_alerter.models.products import (
+    ChangeReason,
+    SaleCheckResult,
+    UniqloProduct,
+)
 from uniqlo_sales_alerter.services.filters import apply_filters
-from uniqlo_sales_alerter.services.state import SeenVariantStore
+from uniqlo_sales_alerter.services.state import SeenVariantStore, StateSnapshot
 from uniqlo_sales_alerter.services.stock import StockVerifier
 
 if TYPE_CHECKING:
@@ -28,6 +33,26 @@ logger = logging.getLogger(__name__)
 _DEFAULT_STATE_PATH = Path(
     os.environ.get("STATE_FILE", Path.cwd() / ".seen_variants.json"),
 )
+
+# Reasons that, on their own, justify firing a fresh notification.
+# PRICE_RISE is intentionally excluded: it surfaces as a tag only when
+# another reason already puts the item into the notification batch.
+_NOTIFY_REASONS: frozenset[ChangeReason] = frozenset({
+    ChangeReason.NEW,
+    ChangeReason.NEW_VARIANT,
+    ChangeReason.PRICE_DROP,
+    ChangeReason.RESTOCKED,
+    ChangeReason.BACK_ABOVE_LOW,
+})
+
+
+def _has_notify_reason(item) -> bool:
+    """True when *item* has at least one variant whose change list
+    contains a notification-worthy reason."""
+    for reasons in item.variant_changes:
+        if any(r in _NOTIFY_REASONS for r in reasons):
+            return True
+    return False
 
 
 class SaleChecker:
@@ -57,12 +82,22 @@ class SaleChecker:
             state_file or _DEFAULT_STATE_PATH,
             suppress_low_stock=config.notifications.suppress_low_stock_alerts,
             low_stock_threshold=config.notifications.low_stock_threshold,
+            retention_days=config.notifications.state_retention_days,
         )
-        self._seen_variants: set[str] = (
-            self._state.load()
+        # The on-disk snapshot is always loaded so we can preserve and
+        # extend sidecars on save.  But for change classification we
+        # honor ``notify_on``: ``all_then_new``/``every_check`` modes
+        # start with an empty "previous" snapshot so the first run after
+        # restart reports everything as NEW (same semantics as before
+        # change-reason tagging existed).
+        loaded = self._state.load()
+        self._disk_snapshot = loaded
+        self._prev_snapshot = (
+            loaded
             if config.notifications.notify_on == "new_deals"
-            else set()
+            else StateSnapshot()
         )
+        self._seen_variants: set[str] = self._prev_snapshot.variants
 
         self._stock_verifier = StockVerifier(
             self._client, config, self._watched_by_product,
@@ -93,13 +128,23 @@ class SaleChecker:
         matching = await self._verify_stock(matching)
 
         current_variants: set[str] = set()
+        current_buckets: dict[str, str] = {}
         for item in matching:
-            current_variants |= self._variant_keys(item)
+            current_variants |= self._state.current_variant_keys(item)
+            current_buckets.update(self._state.current_stock_buckets(item))
 
-        new_deals = [
-            item for item in matching
-            if self._variant_keys(item) - self._seen_variants
-        ]
+        # Annotate each item with per-variant change reasons using the
+        # *previous* snapshot (loaded once at construction time).
+        prev_seen = self._prev_snapshot.variants
+        prev_buckets = self._prev_snapshot.stock_buckets
+        for item in matching:
+            changes, prev_disc = self._state.classify_item(
+                item, prev_seen, prev_buckets,
+            )
+            item.variant_changes = changes
+            item.previous_discount = prev_disc
+
+        new_deals = [item for item in matching if _has_notify_reason(item)]
 
         result = SaleCheckResult(
             total_products_scanned=len(sale_products),
@@ -108,8 +153,33 @@ class SaleChecker:
             new_deals=new_deals,
         )
 
-        self._seen_variants = current_variants
-        self._save_state(current_variants)
+        # Persist updated state.  Variants observed this run get fresh
+        # buckets + timestamps; variants that disappeared but were known
+        # on disk get a one-time ``oos`` transition write so they can
+        # later be detected as RESTOCKED.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        new_last_seen = dict(self._disk_snapshot.last_seen)
+        new_buckets = dict(self._disk_snapshot.stock_buckets)
+        for key, bucket in current_buckets.items():
+            new_buckets[key] = bucket
+            new_last_seen[key] = now_iso
+        observed = set(current_buckets)
+        for key, prior_bucket in self._disk_snapshot.stock_buckets.items():
+            if key in observed:
+                continue
+            if prior_bucket != "oos":
+                new_buckets[key] = "oos"
+                new_last_seen[key] = now_iso
+
+        snapshot = StateSnapshot(
+            variants=current_variants | self._disk_snapshot.variants,
+            stock_buckets=new_buckets,
+            last_seen=new_last_seen,
+        )
+        self._disk_snapshot = snapshot
+        self._prev_snapshot = snapshot
+        self._seen_variants = snapshot.variants
+        self._state.save(snapshot)
         self.last_result = result
         return result
 
@@ -138,12 +208,21 @@ class SaleChecker:
         return await self._stock_verifier.verify(items)
 
     def _variant_keys(self, item) -> set[str]:
-        """Delegate to :meth:`SeenVariantStore.variant_keys`."""
-        return self._state.variant_keys(item)
+        """Delegate to :meth:`SeenVariantStore.current_variant_keys`."""
+        return self._state.current_variant_keys(item)
 
     def _save_state(self, variants: set[str]) -> None:
-        """Delegate to :meth:`SeenVariantStore.save`."""
-        self._state.save(variants)
+        """Persist *variants* using the existing sidecars.
+
+        Kept for backward compatibility with tests that drive the store
+        directly; production code calls :meth:`SeenVariantStore.save`
+        with a full :class:`StateSnapshot`.
+        """
+        self._state.save(StateSnapshot(
+            variants=variants,
+            stock_buckets=self._disk_snapshot.stock_buckets,
+            last_seen=self._disk_snapshot.last_seen,
+        ))
 
     # ------------------------------------------------------------------
     # Watched product helpers
