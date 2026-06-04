@@ -84,20 +84,20 @@ class SaleChecker:
             low_stock_threshold=config.notifications.low_stock_threshold,
             retention_days=config.notifications.state_retention_days,
         )
-        # The on-disk snapshot is always loaded so we can preserve and
-        # extend sidecars on save.  But for change classification we
-        # honor ``notify_on``: ``all_then_new``/``every_check`` modes
-        # start with an empty "previous" snapshot so the first run after
-        # restart reports everything as NEW (same semantics as before
-        # change-reason tagging existed).
+        # Change classification ALWAYS uses the on-disk snapshot so
+        # NEW/PRICE_DROP/RESTOCKED tags reflect reality across restarts.
+        # ``notify_on`` only governs *what* gets dispatched, not how
+        # variants are classified.  For ``all_then_new`` we still want
+        # the first check after process startup to dispatch every
+        # currently matching deal as a catch-up batch — see
+        # ``_catch_up_pending`` below.
         loaded = self._state.load()
         self._disk_snapshot = loaded
-        self._prev_snapshot = (
-            loaded
-            if config.notifications.notify_on == "new_deals"
-            else StateSnapshot()
+        self._prev_snapshot = loaded
+        self._seen_variants: set[str] = loaded.variants
+        self._catch_up_pending = (
+            config.notifications.notify_on == "all_then_new"
         )
-        self._seen_variants: set[str] = self._prev_snapshot.variants
 
         self._stock_verifier = StockVerifier(
             self._client, config, self._watched_by_product,
@@ -145,6 +145,15 @@ class SaleChecker:
             item.previous_discount = prev_disc
 
         new_deals = [item for item in matching if _has_notify_reason(item)]
+
+        # ``all_then_new``: on the first check after process startup,
+        # dispatch every matching deal as a catch-up batch.  Tags on
+        # individual variants remain honest (only truly new variants
+        # carry NEW); items without any change reason simply appear
+        # untagged in the catch-up.
+        if self._catch_up_pending:
+            new_deals = list(matching)
+            self._catch_up_pending = False
 
         result = SaleCheckResult(
             total_products_scanned=len(sale_products),
