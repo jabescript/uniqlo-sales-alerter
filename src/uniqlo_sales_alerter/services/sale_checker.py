@@ -147,12 +147,17 @@ class SaleChecker:
         new_deals = [item for item in matching if _has_notify_reason(item)]
 
         # ``all_then_new``: on the first check after process startup,
-        # dispatch every matching deal as a catch-up batch.  Tags on
-        # individual variants remain honest (only truly new variants
-        # carry NEW); items without any change reason simply appear
-        # untagged in the catch-up.
+        # dispatch a full snapshot of currently matching deals.  This
+        # must still honour ``suppress_low_stock_alerts`` — a deal whose
+        # only variants are suppressed low-stock has no persistable keys
+        # and stays silent here, exactly as it would in steady state.
+        # (Using ``list(matching)`` instead would leak suppressed
+        # low-stock items on every restart/config-reload.)
         if self._catch_up_pending:
-            new_deals = list(matching)
+            new_deals = [
+                item for item in matching
+                if self._state.current_variant_keys(item)
+            ]
             self._catch_up_pending = False
 
         result = SaleCheckResult(

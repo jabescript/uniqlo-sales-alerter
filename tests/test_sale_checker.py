@@ -1025,6 +1025,72 @@ class TestSuppressLowStockReAlert:
         # Second run: M already seen, L still deferred → nothing new.
         assert r2.new_deals == []
 
+    @pytest.mark.asyncio
+    async def test_all_then_new_catchup_respects_suppress(
+        self, sale_config: AppConfig, tmp_path: Path,
+    ):
+        """The all_then_new catch-up batch must not leak suppressed deals.
+
+        On the first check after a restart/config-reload, ``all_then_new``
+        dispatches a full snapshot.  A low-stock-only deal must still be
+        held back when suppression is on — otherwise every reload would
+        re-send it, making the setting appear ignored.
+        """
+        sale_config.notifications.notify_on = "all_then_new"
+        sale_config.notifications.suppress_low_stock_alerts = True
+        sale_config.notifications.low_stock_threshold = 3
+        state_file = tmp_path / ".seen_variants.json"
+        checker = SaleChecker(sale_config, state_file=state_file)
+
+        def _in_stock():
+            return sample_deal(
+                product_id="E710-000",
+                available_sizes=["M"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E710-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+                color_names=["BLACK"],
+                stock_quantities=[5],
+                stock_statuses=["IN_STOCK"],
+            )
+
+        def _low_only():
+            return sample_deal(
+                product_id="E711-000",
+                available_sizes=["M"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E711-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+                color_names=["BLACK"],
+                stock_quantities=[1],
+                stock_statuses=["LOW_STOCK"],
+            )
+
+        async def fake_verify(_items):
+            return [_in_stock(), _low_only()]
+
+        with (
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock,
+                return_value=[_product(_raw("E710-000")), _product(_raw("E711-000"))],
+            ),
+            patch.object(
+                checker, "_verify_stock",
+                new_callable=AsyncMock, side_effect=fake_verify,
+            ),
+            noop_watched_fetch(checker),
+        ):
+            result = await checker.check()
+
+        pids = {item.product_id for item in result.new_deals}
+        assert pids == {"E710-000"}, (
+            "catch-up must include the in-stock deal but suppress the "
+            "low-stock-only deal"
+        )
+
 
 class TestWatchedProductFetch:
     """Tests for fetching watched products that aren't in the sale catalogue."""
