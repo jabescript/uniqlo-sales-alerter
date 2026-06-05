@@ -271,6 +271,15 @@ class SeenVariantStore:
             if not (color and size):
                 per_variant.append(reasons)
                 continue
+            # Mirror current_variant_keys: when low-stock suppression is
+            # on, a currently-low variant is deliberately kept out of the
+            # seen-set so it can re-alert once it climbs back above the
+            # threshold.  It must therefore emit no change reasons here
+            # either — otherwise it would fire as NEW on every run despite
+            # never being persisted.
+            if self._suppress_low_stock and self._variant_is_low(item, idx):
+                per_variant.append(reasons)
+                continue
             bkey = _bucket_key(pid, color, size)
             prefix = f"{pid}:{color}:{size}:"
             prior_keys = [k for k in prev_seen if k.startswith(prefix)]

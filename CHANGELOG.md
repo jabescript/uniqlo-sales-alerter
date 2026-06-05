@@ -4,7 +4,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.6.0 — 2026-06-04
+## v1.6.0 — 2026-06-05
 
 ### New features
 
@@ -14,6 +14,8 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Fixed
 
+- **Suppressed low-stock deals no longer re-alert as `NEW` forever** — with `notifications.suppress_low_stock_alerts` enabled, low-stock variants are intentionally kept out of the persisted seen-set so they only alert once stock climbs back above the threshold. Change classification did not apply the same rule, so a low-stock-only deal was never persisted yet was reported as a brand-new `NEW` deal on *every* check (e.g. the same low-stock item arriving in back-to-back emails every interval). Classification now mirrors the persistence rule exactly, so a suppressed low-stock deal stays silent until it recovers, while in-stock sizes of a mixed deal still fire once as before.
+- **Change tags no longer reset after a restart** — in `all_then_new` mode (the default), classification used to reset to an empty baseline on every process startup, so the first check after a restart or config reload re-tagged every matching deal as `NEW` even though it had been seen before. Classification now always uses the on-disk state, so tags reflect reality. The catch-up dispatch behaviour of `all_then_new` is preserved: the first check after startup still sends every currently matching deal, but only truly new variants carry the `NEW` tag.
 - **Unwatch now respects color and size** — previously, clicking "Unwatch" removed *all* watched variants for a product regardless of colour/size. The unwatch endpoint now accepts `color` and `size` query parameters for targeted removal, and all notification channels generate per-variant unwatch URLs with the correct colour+size codes.
 
 ### Refactoring
