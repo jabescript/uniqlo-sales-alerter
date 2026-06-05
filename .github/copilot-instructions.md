@@ -7,6 +7,7 @@ Core conventions for the Uniqlo Sales Alerter. These apply to every request in t
 - Run `python -m pytest tests/ --tb=short` and fix any failures before finishing — **only when code in `src/` or `tests/` was modified**. Skip for documentation-only changes (`README.md`, `CHANGELOG.md`, `.github/instructions/`, `.cursor/rules/`, etc.).
 - Run `python -m ruff check src/ tests/` and fix any lint errors — **same rule: only when code was modified**.
 - Update `CHANGELOG.md` under the **current version** section for user-visible changes. The current version is the `version` field in `pyproject.toml` — never invent a new version number. Whenever the changelog is updated, also update the current version header's date to today's date (format: `## vX.Y.Z — YYYY-MM-DD`).
+- When fixing a bug that was introduced **within the current unreleased version**, do not add a new `Fixed` entry — instead edit the existing changelog entry for that feature so it describes the correct final behaviour. Only document a `Fixed` entry when the bug affected a **previously released** version. (If unsure whether a behaviour shipped in an earlier release, check `git log`/`git tag`.)
 - Update `README.md` when user-facing behaviour changes: new config options, new CLI flags, new API endpoints, changed notification format, new Docker examples, or anything a user would need to know.
 
 ## Before finishing
