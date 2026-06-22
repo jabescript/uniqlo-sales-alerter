@@ -12,6 +12,7 @@ alwaysApply: true
 - Update `CHANGELOG.md` under the **current version** section for user-visible changes. The current version is the `version` field in `pyproject.toml` — never invent a new version number. Whenever the changelog is updated, also update the current version header's date to today's date (format: `## vX.Y.Z — YYYY-MM-DD`).
 - When fixing a bug that was introduced **within the current unreleased version**, do not add a new `Fixed` entry — instead edit the existing changelog entry for that feature so it describes the correct final behaviour. Only document a `Fixed` entry when the bug affected a **previously released** version. (If unsure whether a behaviour shipped in an earlier release, check `git log`/`git tag`.)
 - Update `README.md` when user-facing behaviour changes: new config options, new CLI flags, new API endpoints, changed notification format, new Docker examples, or anything a user would need to know.
+- When modifying `config.yaml`, add or preserve comments that explain any new or changed keys and list supported option values where applicable.
 
 ## Architecture
 

@@ -24,7 +24,8 @@ class ChangeReason(str, Enum):
     PRICE_DROP = "PRICE_DROP"
     PRICE_RISE = "PRICE_RISE"
     RESTOCKED = "RESTOCKED"
-    BACK_ABOVE_LOW = "BACK_ABOVE_LOW"
+    # Backward-compatible alias: low-stock -> healthy is now RESTOCKED.
+    BACK_ABOVE_LOW = "RESTOCKED"
 
 
 def stock_bucket(qty: int, status: str, threshold: int) -> str:

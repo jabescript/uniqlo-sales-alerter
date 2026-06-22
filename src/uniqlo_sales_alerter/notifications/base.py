@@ -184,7 +184,6 @@ _REASON_ORDER: tuple[ChangeReason, ...] = (
     ChangeReason.NEW,
     ChangeReason.NEW_VARIANT,
     ChangeReason.RESTOCKED,
-    ChangeReason.BACK_ABOVE_LOW,
     ChangeReason.PRICE_DROP,
     ChangeReason.PRICE_RISE,
 )
@@ -193,7 +192,6 @@ _REASON_LABELS: dict[ChangeReason, str] = {
     ChangeReason.NEW: "NEW",
     ChangeReason.NEW_VARIANT: "NEW VARIANT",
     ChangeReason.RESTOCKED: "RESTOCKED",
-    ChangeReason.BACK_ABOVE_LOW: "BACK IN STOCK",
     ChangeReason.PRICE_DROP: "PRICE DROP",
     ChangeReason.PRICE_RISE: "PRICE RISE",
 }

@@ -78,6 +78,7 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("NOTIFY_LOW_STOCK_THRESHOLD",       ["notifications", "low_stock_threshold"],       "int"),
     ("NOTIFY_SUPPRESS_LOW_STOCK_ALERTS", ["notifications", "suppress_low_stock_alerts"], "bool"),
     ("NOTIFY_STATE_RETENTION_DAYS",      ["notifications", "state_retention_days"],      "int"),
+    ("NOTIFY_ALERT_REASONS",             ["notifications", "alert_reasons"],             "list"),
     # -- telegram --
     ("TELEGRAM_ENABLED",            ["notifications", "channels", "telegram", "enabled"],   "bool"),
     ("TELEGRAM_BOT_TOKEN",          ["notifications", "channels", "telegram", "bot_token"], "str"),
@@ -343,6 +344,14 @@ class ChannelsConfig(BaseModel):
     email: EmailChannelConfig = Field(default_factory=EmailChannelConfig)
 
 
+AlertReason = Literal["new", "new_variant", "restocked", "price_drop", "price_rise"]
+_DEFAULT_ALERT_REASONS: tuple[AlertReason, ...] = (
+    "new",
+    "new_variant",
+    "price_drop",
+)
+
+
 class NotificationConfig(BaseModel):
     """Notification behaviour and channel configuration."""
 
@@ -353,7 +362,33 @@ class NotificationConfig(BaseModel):
     low_stock_threshold: int = Field(default=3, ge=0)
     suppress_low_stock_alerts: bool = False
     state_retention_days: int = Field(default=30, ge=0)
+    alert_reasons: list[AlertReason] = Field(
+        default_factory=lambda: list(_DEFAULT_ALERT_REASONS),
+    )
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
+
+    @field_validator("alert_reasons", mode="before")
+    @classmethod
+    def _normalise_alert_reasons(cls, v: Any) -> Any:
+        """Accept comma-separated/env-style values and normalise labels."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            items = [item.strip() for item in v.split(",")]
+        elif isinstance(v, list):
+            items = v
+        else:
+            return v
+        return [
+            str(item).strip().lower().replace("-", "_").replace(" ", "_")
+            for item in items
+            if str(item).strip()
+        ]
+
+    @field_validator("alert_reasons")
+    @classmethod
+    def _dedupe_alert_reasons(cls, v: list[AlertReason]) -> list[AlertReason]:
+        return list(dict.fromkeys(v))
 
 
 class QuietHoursConfig(BaseModel):

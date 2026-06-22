@@ -9,7 +9,7 @@ The file holds three structures, all keyed for fast probing:
   original "have we seen this exact price for this variant?" set).
 - ``stock_buckets``: per-variant ``"in" | "low" | "oos"`` keyed by
   ``product_id:color:size`` (no discount suffix).  Used to detect
-  RESTOCKED and BACK_ABOVE_LOW transitions.
+  RESTOCKED transitions.
 - ``last_seen``: ISO-8601 UTC timestamp per ``product_id:color:size``
   key, used to TTL-prune disappeared variants.
 
@@ -305,10 +305,12 @@ class SeenVariantStore:
                     elif new_discount < min(prior_discounts):
                         reasons.append(ChangeReason.PRICE_RISE)
 
-            if prior_bucket == "oos" and new_bucket in ("in", "low"):
+            if (
+                prior_bucket == "oos" and new_bucket in ("in", "low")
+            ) or (
+                prior_bucket == "low" and new_bucket == "in"
+            ):
                 reasons.append(ChangeReason.RESTOCKED)
-            elif prior_bucket == "low" and new_bucket == "in":
-                reasons.append(ChangeReason.BACK_ABOVE_LOW)
 
             per_variant.append(reasons)
 

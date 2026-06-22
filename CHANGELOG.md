@@ -4,13 +4,14 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.6.0 — 2026-06-05
+## v1.6.0 — 2026-06-22
 
 ### New features
 
-- **Per-variant change tags** — every notification channel (email, Telegram, console, HTML report) now labels each reported variant with *why* it appears: `NEW`, `NEW VARIANT`, `RESTOCKED`, `BACK IN STOCK`, `PRICE DROP`, or `PRICE RISE`. Price tags include the previous-to-current percentage delta (e.g. `PRICE DROP 20% → 35%`).
+- **Per-variant change tags** — every notification channel (email, Telegram, console, HTML report) now labels each reported variant with *why* it appears: `NEW`, `NEW VARIANT`, `RESTOCKED`, `PRICE DROP`, or `PRICE RISE`. Price tags include the previous-to-current percentage delta (e.g. `PRICE DROP 20% → 35%`).
 - **State retention with auto-pruning** — a new `notifications.state_retention_days` setting (default `30`) controls how long the alerter remembers variants that have gone out of stock or no longer match before forgetting them. Once forgotten, the next reappearance counts as `NEW` again. Variants currently in stock are never pruned. Set to `0` to disable pruning and keep history forever. Env var: `NOTIFY_STATE_RETENTION_DAYS`. Configurable via the settings UI under *Notification Triggers* → *State Retention (days)*.
-- **Restock and stock-bucket transitions** — state now tracks each variant's stock bucket (`in` / `low` / `oos`) in addition to the price seen, so transitions from out-of-stock to in-stock fire a `RESTOCKED` tag and low-stock → normal-stock fires `BACK IN STOCK`, independent of price changes.
+- **Restock and stock-bucket transitions** — state now tracks each variant's stock bucket (`in` / `low` / `oos`) in addition to the price seen, so transitions from out-of-stock to in-stock and low-stock to normal-stock both fire a `RESTOCKED` tag, independent of price changes.
+- **Configurable alert categories** - `notifications.alert_reasons` controls which change reasons can send change-based notifications. Defaults are `new`, `new_variant`, and `price_drop`; `restocked` and `price_rise` are opt-in.
 
 ### Fixed
 

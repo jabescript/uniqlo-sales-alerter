@@ -288,6 +288,7 @@ Every config option can be set via env vars for initial setup. On first startup 
 | `PREVIEW_HTML` | true/false | `notifications.preview_html` |
 | `NOTIFY_LOW_STOCK_THRESHOLD` | int | `notifications.low_stock_threshold` |
 | `NOTIFY_SUPPRESS_LOW_STOCK_ALERTS` | true/false | `notifications.suppress_low_stock_alerts` |
+| `NOTIFY_ALERT_REASONS` | comma-separated | `notifications.alert_reasons` |
 | `TELEGRAM_ENABLED` | true/false | `notifications.channels.telegram.enabled` |
 | `TELEGRAM_BOT_TOKEN` | string | `notifications.channels.telegram.bot_token` |
 | `TELEGRAM_CHAT_ID` | string | `notifications.channels.telegram.chat_id` |
@@ -379,6 +380,8 @@ When `notifications.suppress_low_stock_alerts: true`, variants currently below t
 
 #### Trigger matrix
 
+The matrix assumes the relevant reason is enabled in `notifications.alert_reasons`.
+
 | Event | Notification fired? |
 |---|---|
 | Item first seen (fresh process start or new variant appears) | Yes, unless `suppress_low_stock_alerts` is on and the variant is below the threshold |
@@ -401,6 +404,8 @@ When `notifications.suppress_low_stock_alerts: true`, variants currently below t
 #### Notification Triggers settings
 
 The web UI's **Notification Triggers** section (between Schedule and General) exposes:
+
+- **Alert Categories** - checkboxes for `new`, `new_variant`, `restocked`, `price_drop`, and `price_rise`. By default, new items, new variants, and price drops trigger alerts; restocks and price rises are opt-in.
 
 - **Suppress Low-Stock Alerts** — toggles the `suppress_low_stock_alerts` flag described above. Off by default, so upgrades don't change existing behaviour. Turn it on when you want to stop being pinged about OOS items that restock with only a handful of units; the alert will fire again once the quantity climbs above the threshold.
 - **Low-Stock Threshold** — integer, default `3`. A variant is considered low stock when its remaining quantity is at or below this number. When positive this setting is **authoritative** — it overrides the Uniqlo API's own `LOW_STOCK` flag, so a variant the API calls "low" at 50 units won't be badged (or suppressed) if you only care about ≤3. Set to `0` to disable the numeric comparison and fall back to the API's flag as the sole signal.

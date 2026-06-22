@@ -463,6 +463,23 @@ _TEMPLATE = """\
     <div class="section-header">Notification Triggers</div>
     <div class="section-body">
 
+      <div class="field">
+        <label>Alert Categories</label>
+        <div class="help">
+          Choose which change reasons can send change-based notifications.
+          Price rises are still shown as tags when another selected reason
+          sends the deal.
+        </div>
+        <div class="checkbox-group">
+          <label><input type="checkbox" name="alert-reason" value="new"/> New</label>
+          <label><input type="checkbox" name="alert-reason"
+            value="new_variant"/> New Variant</label>
+          <label><input type="checkbox" name="alert-reason" value="restocked"/> Restocked</label>
+          <label><input type="checkbox" name="alert-reason" value="price_drop"/> Price Drop</label>
+          <label><input type="checkbox" name="alert-reason" value="price_rise"/> Price Rise</label>
+        </div>
+      </div>
+
       <div class="toggle-row field">
         <div>
           <span class="toggle-label">Suppress Low-Stock Alerts</span>
@@ -1205,6 +1222,11 @@ _TEMPLATE = """\
     $("preview-html").checked = !!cfg.notifications.preview_html;
     $("notify-on").value      = cfg.notifications.notify_on;
     $("check-on-startup").checked = cfg.notifications.check_on_startup !== false;
+    var alertReasons = cfg.notifications.alert_reasons ||
+      ["new", "new_variant", "price_drop"];
+    document.querySelectorAll('input[name="alert-reason"]').forEach(function (cb) {
+      cb.checked = alertReasons.indexOf(cb.value) !== -1;
+    });
     $("suppress-low-stock-alerts").checked =
       !!cfg.notifications.suppress_low_stock_alerts;
     $("low-stock-threshold").value =
@@ -1268,6 +1290,7 @@ _TEMPLATE = """\
         preview_html: checked("preview-html"),
         notify_on:    val("notify-on"),
         check_on_startup: checked("check-on-startup"),
+        alert_reasons: _collectCheckboxes("alert-reason"),
         low_stock_threshold: parseInt(val("low-stock-threshold"), 10) || 0,
         suppress_low_stock_alerts: checked("suppress-low-stock-alerts"),
         state_retention_days: parseInt(val("state-retention-days"), 10) || 0,

@@ -137,6 +137,20 @@ notifications:
   # you can see the full state of a deal.
   suppress_low_stock_alerts: false
 
+  # Alert categories that are allowed to trigger a change-based
+  # notification.  Supported values:
+  #   - new         first time a matching product is seen
+  #   - new_variant newly available colour/size on a known product
+  #   - restocked   out-of-stock or low-stock variant became available
+  #   - price_drop  discount increased
+  #   - price_rise  discount decreased (off by default)
+  # Leave "restocked" out if you do not want restock alerts.
+  alert_reasons:
+  - new
+  - new_variant
+  - price_drop
+  state_retention_days: 30
+
   channels:
     telegram:
       enabled: false

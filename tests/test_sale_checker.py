@@ -1623,13 +1623,46 @@ class TestChangeClassification:
         assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
 
     @pytest.mark.asyncio
-    async def test_back_above_low_transition(self, tmp_path: Path):
+    async def test_low_to_healthy_transition_is_restocked(self, tmp_path: Path):
         from uniqlo_sales_alerter.models.products import ChangeReason
         state = tmp_path / "s.json"
         cfg = self._cfg(low_stock_threshold=5)
         await self._run(cfg, self._item(discount=40, qtys=[2]), state)
         result = await self._run(cfg, self._item(discount=40, qtys=[20]), state)
-        assert ChangeReason.BACK_ABOVE_LOW in result.new_deals[0].variant_changes[0]
+        assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_disabled_restock_reason_does_not_notify(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(alert_reasons=["new", "new_variant", "price_drop"])
+        await self._run(cfg, self._item(discount=40), state)
+        # Run with no matching items: variant disappears -> auto-OOS write.
+        checker = SaleChecker(cfg, state_file=state)
+        with (
+            patch.object(checker, "_apply_filters", return_value=[]),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            await checker.check()
+
+        result = await self._run(cfg, self._item(discount=40), state)
+        assert result.new_deals == []
+        assert ChangeReason.RESTOCKED in result.matching_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_price_rise_can_notify_when_enabled(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(alert_reasons=["price_rise"])
+        await self._run(cfg, self._item(discount=50), state)
+        result = await self._run(cfg, self._item(discount=30), state)
+        assert len(result.new_deals) == 1
+        assert ChangeReason.PRICE_RISE in result.new_deals[0].variant_changes[0]
 
     @pytest.mark.asyncio
     async def test_new_variant_tagged_only_on_added_variant(

@@ -34,23 +34,25 @@ _DEFAULT_STATE_PATH = Path(
     os.environ.get("STATE_FILE", Path.cwd() / ".seen_variants.json"),
 )
 
-# Reasons that, on their own, justify firing a fresh notification.
-# PRICE_RISE is intentionally excluded: it surfaces as a tag only when
-# another reason already puts the item into the notification batch.
-_NOTIFY_REASONS: frozenset[ChangeReason] = frozenset({
-    ChangeReason.NEW,
-    ChangeReason.NEW_VARIANT,
-    ChangeReason.PRICE_DROP,
-    ChangeReason.RESTOCKED,
-    ChangeReason.BACK_ABOVE_LOW,
-})
+_REASON_CONFIG_MAP: dict[str, ChangeReason] = {
+    "new": ChangeReason.NEW,
+    "new_variant": ChangeReason.NEW_VARIANT,
+    "restocked": ChangeReason.RESTOCKED,
+    "price_drop": ChangeReason.PRICE_DROP,
+    "price_rise": ChangeReason.PRICE_RISE,
+}
 
 
-def _has_notify_reason(item) -> bool:
+def _notify_reasons_from_config(reason_names: list[str]) -> frozenset[ChangeReason]:
+    """Map configured reason keys to internal change reasons."""
+    return frozenset(_REASON_CONFIG_MAP[name] for name in reason_names)
+
+
+def _has_notify_reason(item, notify_reasons: frozenset[ChangeReason]) -> bool:
     """True when *item* has at least one variant whose change list
     contains a notification-worthy reason."""
     for reasons in item.variant_changes:
-        if any(r in _NOTIFY_REASONS for r in reasons):
+        if any(r in notify_reasons for r in reasons):
             return True
     return False
 
@@ -77,6 +79,9 @@ class SaleChecker:
         self._ignored_keywords: list[str] = [
             kw.lower() for kw in config.filters.ignored_keywords if kw.strip()
         ]
+        self._notify_reasons = _notify_reasons_from_config(
+            config.notifications.alert_reasons,
+        )
 
         self._state = SeenVariantStore(
             state_file or _DEFAULT_STATE_PATH,
@@ -144,7 +149,10 @@ class SaleChecker:
             item.variant_changes = changes
             item.previous_discount = prev_disc
 
-        new_deals = [item for item in matching if _has_notify_reason(item)]
+        new_deals = [
+            item for item in matching
+            if _has_notify_reason(item, self._notify_reasons)
+        ]
 
         # ``all_then_new``: on the first check after process startup,
         # dispatch a full snapshot of currently matching deals.  This
