@@ -1604,9 +1604,12 @@ class TestChangeClassification:
         """present -> absent (auto-OOS) -> present again -> RESTOCKED."""
         from uniqlo_sales_alerter.models.products import ChangeReason
         state = tmp_path / "s.json"
-        await self._run(self._cfg(), self._item(discount=40), state)
+        cfg = self._cfg(
+            alert_reasons=["new", "new_variant", "restocked", "price_drop"],
+        )
+        await self._run(cfg, self._item(discount=40), state)
         # Run with no matching items: variant disappears -> auto-OOS write.
-        checker = SaleChecker(self._cfg(), state_file=state)
+        checker = SaleChecker(cfg, state_file=state)
         with (
             patch.object(checker, "_apply_filters", return_value=[]),
             patch.object(
@@ -1618,7 +1621,7 @@ class TestChangeClassification:
         ):
             await checker.check()
         # Reappears -> RESTOCKED.
-        result = await self._run(self._cfg(), self._item(discount=40), state)
+        result = await self._run(cfg, self._item(discount=40), state)
         assert len(result.new_deals) == 1
         assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
 
@@ -1626,7 +1629,10 @@ class TestChangeClassification:
     async def test_low_to_healthy_transition_is_restocked(self, tmp_path: Path):
         from uniqlo_sales_alerter.models.products import ChangeReason
         state = tmp_path / "s.json"
-        cfg = self._cfg(low_stock_threshold=5)
+        cfg = self._cfg(
+            low_stock_threshold=5,
+            alert_reasons=["new", "new_variant", "restocked", "price_drop"],
+        )
         await self._run(cfg, self._item(discount=40, qtys=[2]), state)
         result = await self._run(cfg, self._item(discount=40, qtys=[20]), state)
         assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
