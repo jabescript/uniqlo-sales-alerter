@@ -15,12 +15,9 @@ from fastapi.responses import HTMLResponse
 from uniqlo_sales_alerter.api.routes import _redact_secrets, actions_router, router
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
 from uniqlo_sales_alerter.config import AppConfig, load_config, save_config
-from uniqlo_sales_alerter.models.products import (
-    SaleCheckResult,
-    UniqloProduct,
-    build_product_url,
-)
+from uniqlo_sales_alerter.models.products import SaleCheckResult
 from uniqlo_sales_alerter.notifications.dispatcher import NotificationDispatcher
+from uniqlo_sales_alerter.services.enrichment import enrich_config
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
 from uniqlo_sales_alerter.settings_ui import build_settings_page
 
@@ -28,8 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("curl_cffi").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -57,107 +53,6 @@ def _in_quiet_hours(config: AppConfig) -> bool:
         return start <= now < end
     # Wraps midnight (e.g. 23:00 → 06:00)
     return now >= start or now < end
-
-
-def _find_color_name(l2s: list[dict], color_code: str) -> str:
-    """Look up the human-readable colour name from L2 variant data."""
-    for l2 in l2s:
-        color = l2.get("color", {})
-        if color.get("displayCode") == color_code:
-            return color.get("name", "")
-    return ""
-
-
-def _find_size_name(product: UniqloProduct, size_code: str) -> str:
-    """Look up the human-readable size name from a product's size list."""
-    for sz in product.sizes:
-        if sz.display_code == size_code:
-            return sz.name
-    return ""
-
-
-async def _enrich_config(config: AppConfig, client: UniqloClient) -> bool:
-    """Fill in missing metadata for watched variants and ignored products.
-
-    Resolves product names, human-readable colour/size names, and
-    reconstructs missing URLs.  Returns ``True`` when at least one entry
-    was updated (caller should persist the config).
-    """
-    base = config.product_page_base
-
-    incomplete_variants = [
-        wv for wv in config.filters.watched_variants
-        if wv.id and (
-            not wv.name or not wv.color_name
-            or not wv.size_name or not wv.url
-        )
-    ]
-    incomplete_ignored = [
-        ip for ip in config.filters.ignored_products
-        if ip.id and (not ip.name or not ip.url)
-    ]
-    if not incomplete_variants and not incomplete_ignored:
-        return False
-
-    # Batch-fetch product listings for all products that need enrichment.
-    all_ids = list(
-        {wv.id for wv in incomplete_variants}
-        | {ip.id for ip in incomplete_ignored}
-    )
-    products = await client.fetch_products_by_ids(all_ids)
-    product_by_id = {p.product_id.upper(): p for p in products}
-
-    # Fetch L2 variant data (colour names) for products that need it.
-    l2_keys = {
-        (wv.id, wv.price_group)
-        for wv in incomplete_variants
-        if not wv.color_name or not wv.size_name
-    }
-    l2_by_product: dict[str, list[dict]] = {}
-    for pid, pg in l2_keys:
-        l2_by_product[pid.upper()] = await client.fetch_product_l2s(pid, pg)
-
-    changed = False
-
-    for ip in incomplete_ignored:
-        prod = product_by_id.get(ip.id.upper())
-        if prod and not ip.name:
-            ip.name = prod.name
-            changed = True
-        if not ip.url:
-            pg = prod.price_group if prod else "00"
-            ip.url = build_product_url(base, ip.id, pg)
-            changed = True
-
-    for wv in incomplete_variants:
-        prod = product_by_id.get(wv.id.upper())
-
-        if prod and not wv.name:
-            wv.name = prod.name
-            changed = True
-
-        if not wv.url:
-            wv.url = build_product_url(
-                base, wv.id, wv.price_group, wv.color, wv.size,
-            )
-            changed = True
-
-        if not wv.size_name and prod:
-            wv.size_name = _find_size_name(prod, wv.size)
-            changed = changed or bool(wv.size_name)
-
-        if not wv.color_name:
-            l2s = l2_by_product.get(wv.id.upper(), [])
-            wv.color_name = _find_color_name(l2s, wv.color)
-            changed = changed or bool(wv.color_name)
-
-    if changed:
-        logger.debug(
-            "Enriched metadata for %d watched variant(s) "
-            "and %d ignored product(s)",
-            len(incomplete_variants), len(incomplete_ignored),
-        )
-    return changed
 
 
 async def run_sale_check(app_state: AppState) -> SaleCheckResult:
@@ -233,7 +128,7 @@ def _add_check_job(app_state: AppState) -> None:
 async def _try_enrich(config: AppConfig, client: UniqloClient) -> None:
     """Enrich watched/ignored metadata; save config if anything changed."""
     try:
-        if await _enrich_config(config, client):
+        if await enrich_config(config, client):
             save_config(config)
     except Exception:
         logger.warning("Watched-variant enrichment failed — will retry later")

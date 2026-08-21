@@ -141,3 +141,74 @@ class TestTriggerCheck:
             resp = client.post("/api/v1/sales/check")
             assert resp.status_code == 200
             assert resp.json()["total_products_scanned"] == 1000
+
+
+class TestUnwatchAction:
+    """The /actions/unwatch endpoint should filter by color+size when provided."""
+
+    def _set_watched(self, client: TestClient, variants: list[dict]) -> None:
+        from uniqlo_sales_alerter.main import app
+
+        app.state.app_state.config = AppConfig.model_validate({
+            "filters": {"watched_variants": variants},
+        })
+
+    def test_unwatch_with_color_and_size_removes_only_matching(
+        self, client: TestClient,
+    ):
+        self._set_watched(client, [
+            {"id": "E001", "color": "09", "size": "002", "name": "Black M"},
+            {"id": "E001", "color": "01", "size": "003", "name": "White L"},
+        ])
+
+        with patch(
+            "uniqlo_sales_alerter.api.routes._save_and_reload",
+            new_callable=AsyncMock,
+        ) as mock_save:
+            resp = client.get(
+                "/actions/unwatch/E001?name=Test&color=09&size=002",
+                follow_redirects=False,
+            )
+            assert resp.status_code == 200
+            assert "removed" in resp.text.lower()
+            saved_data = mock_save.call_args[0][0]
+            remaining = saved_data["filters"]["watched_variants"]
+            assert len(remaining) == 1
+            assert remaining[0]["color"] == "01"
+            assert remaining[0]["size"] == "003"
+
+    def test_unwatch_without_color_removes_all_for_product(
+        self, client: TestClient,
+    ):
+        self._set_watched(client, [
+            {"id": "E001", "color": "09", "size": "002", "name": "Black M"},
+            {"id": "E001", "color": "01", "size": "003", "name": "White L"},
+            {"id": "E002", "color": "05", "size": "001", "name": "Other"},
+        ])
+
+        with patch(
+            "uniqlo_sales_alerter.api.routes._save_and_reload",
+            new_callable=AsyncMock,
+        ) as mock_save:
+            resp = client.get(
+                "/actions/unwatch/E001?name=Test",
+                follow_redirects=False,
+            )
+            assert resp.status_code == 200
+            saved_data = mock_save.call_args[0][0]
+            remaining = saved_data["filters"]["watched_variants"]
+            assert len(remaining) == 1
+            assert remaining[0]["id"] == "E002"
+
+    def test_unwatch_nonexistent_variant_returns_not_watched(
+        self, client: TestClient,
+    ):
+        self._set_watched(client, [
+            {"id": "E001", "color": "09", "size": "002", "name": "Black M"},
+        ])
+        resp = client.get(
+            "/actions/unwatch/E001?name=Test&color=99&size=999",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 200
+        assert "not on your" in resp.text.lower() or "not watched" in resp.text.lower()

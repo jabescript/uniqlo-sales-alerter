@@ -1,37 +1,60 @@
-"""Core service that checks for sales, applies filters, and manages the result cache."""
+"""Core service that orchestrates sale checks.
+
+Delegates to focused modules:
+
+- :mod:`~.filters` — product filtering pipeline
+- :mod:`~.stock` — real-time stock verification
+- :mod:`~.state` — seen-variant persistence for new-deal detection
+"""
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, urlparse
 
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
 from uniqlo_sales_alerter.models.products import (
+    ChangeReason,
     SaleCheckResult,
-    SaleItem,
     UniqloProduct,
-    UniqloSize,
-    build_product_url,
-    is_low_stock,
 )
+from uniqlo_sales_alerter.services.filters import apply_filters
+from uniqlo_sales_alerter.services.state import SeenVariantStore, StateSnapshot
+from uniqlo_sales_alerter.services.stock import StockVerifier
 
 if TYPE_CHECKING:
     from uniqlo_sales_alerter.config import AppConfig, WatchedVariant
 
 logger = logging.getLogger(__name__)
 
-_IN_STOCK_STATUSES = frozenset({"IN_STOCK", "LOW_STOCK"})
-_STOCK_OUT = "STOCK_OUT"
-_MAX_STOCK_CONCURRENCY = 10
-_DEFAULT_PRICE_GROUP = "00"
 _DEFAULT_STATE_PATH = Path(
     os.environ.get("STATE_FILE", Path.cwd() / ".seen_variants.json"),
 )
+
+_REASON_CONFIG_MAP: dict[str, ChangeReason] = {
+    "new": ChangeReason.NEW,
+    "new_variant": ChangeReason.NEW_VARIANT,
+    "restocked": ChangeReason.RESTOCKED,
+    "price_drop": ChangeReason.PRICE_DROP,
+    "price_rise": ChangeReason.PRICE_RISE,
+}
+
+
+def _notify_reasons_from_config(reason_names: list[str]) -> frozenset[ChangeReason]:
+    """Map configured reason keys to internal change reasons."""
+    return frozenset(_REASON_CONFIG_MAP[name] for name in reason_names)
+
+
+def _has_notify_reason(item, notify_reasons: frozenset[ChangeReason]) -> bool:
+    """True when *item* has at least one variant whose change list
+    contains a notification-worthy reason."""
+    for reasons in item.variant_changes:
+        if any(r in notify_reasons for r in reasons):
+            return True
+    return False
 
 
 class SaleChecker:
@@ -46,7 +69,7 @@ class SaleChecker:
         self._config = config
         self._client = UniqloClient(config)
         self.last_result: SaleCheckResult | None = None
-        self._state_path = state_file or _DEFAULT_STATE_PATH
+
         self._watched_ids, self._watched_by_product = self._index_watched(
             config.filters.watched_variants,
         )
@@ -56,10 +79,33 @@ class SaleChecker:
         self._ignored_keywords: list[str] = [
             kw.lower() for kw in config.filters.ignored_keywords if kw.strip()
         ]
-        self._seen_variants: set[str] = (
-            self._load_state()
-            if config.notifications.notify_on == "new_deals"
-            else set()
+        self._notify_reasons = _notify_reasons_from_config(
+            config.notifications.alert_reasons,
+        )
+
+        self._state = SeenVariantStore(
+            state_file or _DEFAULT_STATE_PATH,
+            suppress_low_stock=config.notifications.suppress_low_stock_alerts,
+            low_stock_threshold=config.notifications.low_stock_threshold,
+            retention_days=config.notifications.state_retention_days,
+        )
+        # Change classification ALWAYS uses the on-disk snapshot so
+        # NEW/PRICE_DROP/RESTOCKED tags reflect reality across restarts.
+        # ``notify_on`` only governs *what* gets dispatched, not how
+        # variants are classified.  For ``all_then_new`` we still want
+        # the first check after process startup to dispatch every
+        # currently matching deal as a catch-up batch — see
+        # ``_catch_up_pending`` below.
+        loaded = self._state.load()
+        self._disk_snapshot = loaded
+        self._prev_snapshot = loaded
+        self._seen_variants: set[str] = loaded.variants
+        self._catch_up_pending = (
+            config.notifications.notify_on == "all_then_new"
+        )
+
+        self._stock_verifier = StockVerifier(
+            self._client, config, self._watched_by_product,
         )
 
     @property
@@ -72,158 +118,55 @@ class SaleChecker:
         await self._client.aclose()
 
     # ------------------------------------------------------------------
-    # Persistent variant-level state
+    # Main check pipeline
     # ------------------------------------------------------------------
 
-    def _load_state(self) -> set[str]:
-        """Load previously seen variant keys from disk."""
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            variants = data.get("variants", [])
-            logger.debug(
-                "Loaded %d seen variants from %s", len(variants), self._state_path,
-            )
-            return set(variants)
-        except FileNotFoundError:
-            logger.debug("No state file at %s — starting fresh", self._state_path)
-            return set()
-        except (json.JSONDecodeError, KeyError):
-            logger.warning(
-                "Corrupt state file %s — starting fresh", self._state_path,
-            )
-            return set()
-
-    def _save_state(self, variants: set[str]) -> None:
-        """Persist current variant keys to disk."""
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "updated_at": self._utc_now_iso(),
-            "variants": sorted(variants),
-        }
-        self._state_path.write_text(
-            json.dumps(payload, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        logger.debug(
-            "Saved %d variant keys to %s", len(variants), self._state_path,
-        )
-
-    @staticmethod
-    def _utc_now_iso() -> str:
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).isoformat()
-
-    def _variant_keys(self, item: SaleItem) -> set[str]:
-        """Extract ``product_id:color:size:discount`` keys from a SaleItem.
-
-        Each URL contains colour and size query parameters that uniquely
-        identify a purchasable variant.  Both URL styles are handled:
-        ``colorDisplayCode``/``sizeDisplayCode`` and ``colorCode``/
-        ``sizeCode``.  For the latter the alphabetic prefix is stripped so
-        keys remain comparable across styles.
-
-        The discount percentage is appended so that a price change on an
-        existing variant is detected as a new deal.  For items without a
-        known discount (some countries don't expose the original price),
-        the literal ``"sale"`` is used instead so size/color changes still
-        trigger notifications.
-
-        When :pyattr:`NotificationConfig.suppress_low_stock_alerts` is
-        ``True`` any variant currently in low-stock state is **omitted**
-        from the returned set.  This keeps it out of the seen-set, so the
-        user only gets alerted when it climbs back above the threshold —
-        avoiding notifications for OOS items that restock with just a
-        handful of units.
-
-        Falls back to ``product_id:suffix`` when no URL parameters are available.
-        """
-        import re
-
-        cfg = self._config.notifications
-        suffix = f"{item.discount_percentage:g}" if item.has_known_discount else "sale"
-        suppress_low = cfg.suppress_low_stock_alerts
-        threshold = cfg.low_stock_threshold
-
-        keys: set[str] = set()
-        saw_variant_url = False
-        for idx, url in enumerate(item.product_urls):
-            parsed = urlparse(url)
-            params = parse_qs(parsed.query)
-
-            color = params.get("colorDisplayCode", [""])[0]
-            size = params.get("sizeDisplayCode", [""])[0]
-
-            if not color:
-                raw = params.get("colorCode", [""])[0]
-                color = re.sub(r"^[A-Z]+", "", raw)
-            if not size:
-                raw = params.get("sizeCode", [""])[0]
-                size = re.sub(r"^[A-Z]+", "", raw)
-
-            if not (color and size):
-                continue
-            saw_variant_url = True
-            if suppress_low and self._variant_is_low(item, idx, threshold):
-                continue
-            keys.add(f"{item.product_id}:{color}:{size}:{suffix}")
-        if not saw_variant_url:
-            keys.add(f"{item.product_id}:{suffix}")
-        return keys
-
-    @staticmethod
-    def _variant_is_low(item: SaleItem, idx: int, threshold: int) -> bool:
-        """True when the variant at *idx* is currently in low-stock state."""
-        qty = item.stock_quantities[idx] if idx < len(item.stock_quantities) else 0
-        status = item.stock_statuses[idx] if idx < len(item.stock_statuses) else ""
-        return is_low_stock(qty, status, threshold)
-
     async def check(self) -> SaleCheckResult:
-        """Run a full sale check: fetch sale items, filter, diff, and cache."""
+        """Run a full sale check: fetch, filter, verify stock, detect new deals."""
         sale_products = await self._client.fetch_sale_products()
         logger.debug("Fetched %d sale products from Uniqlo API", len(sale_products))
 
-        # Items come from flagCodes=discount / limitedOffer, plus any
-        # configured sale_paths (category IDs).  Some countries return
-        # promo == base or promo = None so is_on_sale is False, but the
-        # items are still genuinely on sale — we keep them and mark them
-        # as unknown-discount downstream.
-
-        # Watched variants are included whenever they're in stock, even when
-        # not on sale.  Fetch any watched IDs missing from the sale results.
-        all_products: list[UniqloProduct] = list(sale_products)
-        if self._watched_ids:
-            sale_pids = {p.product_id.upper() for p in sale_products}
-            missing_upper = self._watched_ids - sale_pids
-            if missing_upper:
-                to_fetch: set[str] = set()
-                for pid_upper in missing_upper:
-                    for wv in self._watched_by_product.get(pid_upper, []):
-                        to_fetch.add(wv.id)
-                watched_extra = await self._client.fetch_products_by_ids(
-                    sorted(to_fetch),
-                )
-                logger.debug(
-                    "Fetched %d watched product(s) not currently on sale",
-                    len(watched_extra),
-                )
-                all_products.extend(watched_extra)
-
+        all_products = await self._include_watched_products(sale_products)
         sale_pids = {p.product_id.upper() for p in sale_products}
-        matching = self._apply_filters(all_products, sale_pids)
 
-        # Verify real-time stock and pick in-stock colors for each size.
+        matching = self._apply_filters(all_products, sale_pids)
         matching = await self._verify_stock(matching)
 
-        # Build variant keys for all current deals.
         current_variants: set[str] = set()
+        current_buckets: dict[str, str] = {}
         for item in matching:
-            current_variants |= self._variant_keys(item)
+            current_variants |= self._state.current_variant_keys(item)
+            current_buckets.update(self._state.current_stock_buckets(item))
 
-        # A deal is "new" if it has at least one variant not seen before.
+        # Annotate each item with per-variant change reasons using the
+        # *previous* snapshot (loaded once at construction time).
+        prev_seen = self._prev_snapshot.variants
+        prev_buckets = self._prev_snapshot.stock_buckets
+        for item in matching:
+            changes, prev_disc = self._state.classify_item(
+                item, prev_seen, prev_buckets,
+            )
+            item.variant_changes = changes
+            item.previous_discount = prev_disc
+
         new_deals = [
             item for item in matching
-            if self._variant_keys(item) - self._seen_variants
+            if _has_notify_reason(item, self._notify_reasons)
         ]
+
+        # ``all_then_new``: on the first check after process startup,
+        # dispatch a full snapshot of currently matching deals.  This
+        # must still honour ``suppress_low_stock_alerts`` — a deal whose
+        # only variants are suppressed low-stock has no persistable keys
+        # and stays silent here, exactly as it would in steady state.
+        # (Using ``list(matching)`` instead would leak suppressed
+        # low-stock items on every restart/config-reload.)
+        if self._catch_up_pending:
+            new_deals = [
+                item for item in matching
+                if self._state.current_variant_keys(item)
+            ]
+            self._catch_up_pending = False
 
         result = SaleCheckResult(
             total_products_scanned=len(sale_products),
@@ -232,423 +175,119 @@ class SaleChecker:
             new_deals=new_deals,
         )
 
-        self._seen_variants = current_variants
-        self._save_state(current_variants)
+        # Persist updated state.  Variants observed this run get fresh
+        # buckets + timestamps; variants that disappeared but were known
+        # on disk get a one-time ``oos`` transition write so they can
+        # later be detected as RESTOCKED.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        new_last_seen = dict(self._disk_snapshot.last_seen)
+        new_buckets = dict(self._disk_snapshot.stock_buckets)
+        for key, bucket in current_buckets.items():
+            new_buckets[key] = bucket
+            new_last_seen[key] = now_iso
+        observed = set(current_buckets)
+        for key, prior_bucket in self._disk_snapshot.stock_buckets.items():
+            if key in observed:
+                continue
+            if prior_bucket != "oos":
+                new_buckets[key] = "oos"
+                new_last_seen[key] = now_iso
+
+        snapshot = StateSnapshot(
+            variants=current_variants | self._disk_snapshot.variants,
+            stock_buckets=new_buckets,
+            last_seen=new_last_seen,
+        )
+        self._disk_snapshot = snapshot
+        self._prev_snapshot = snapshot
+        self._seen_variants = snapshot.variants
+        self._state.save(snapshot)
         self.last_result = result
         return result
 
     # ------------------------------------------------------------------
-    # Watched / ignored helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _index_watched(
-        variants: list[WatchedVariant],
-    ) -> tuple[set[str], dict[str, list[WatchedVariant]]]:
-        """Index watched variants into a product-ID set and per-product map.
-
-        Returns ``(watched_ids_upper, {product_id_upper: [variant, …]})``.
-        """
-        by_product: dict[str, list[WatchedVariant]] = {}
-        for wv in variants:
-            by_product.setdefault(wv.id.upper(), []).append(wv)
-        return set(by_product.keys()), by_product
-
-    @staticmethod
-    def _matches_any(product_id: str, id_set: set[str]) -> bool:
-        """Check if *product_id* matches any entry in *id_set* (prefix match)."""
-        pid = product_id.upper()
-        return any(pid.startswith(w) for w in id_set)
-
-    def _is_ignored(self, product_id: str) -> bool:
-        return self._matches_any(product_id, self._ignored_ids)
-
-    def _matches_keyword(self, product_name: str) -> bool:
-        """Check if *product_name* contains any ignored keyword (case-insensitive)."""
-        name_lower = product_name.lower()
-        return any(kw in name_lower for kw in self._ignored_keywords)
-
-    # ------------------------------------------------------------------
-    # Filtering
+    # Delegation methods
     # ------------------------------------------------------------------
 
     def _apply_filters(
         self,
         products: list[UniqloProduct],
         sale_product_ids: set[str] | None = None,
-    ) -> list[SaleItem]:
-        """Apply gender, size, discount, and ignore filters.
-
-        Watched variants are always included.  Ignored products are skipped
-        unless they have a watched variant (watched takes precedence).
-
-        Items without a known discount (``promo >= base``, common in US/CA/JP/
-        KR/SG) bypass the ``min_sale_percentage`` filter but still must pass
-        gender and size checks.
-        """
-        cfg = self._config.filters
-        watched = self._watched_ids
-        gender_filter = {g.upper() for g in cfg.gender}
-        all_size_names = self._normalised_size_set()
-        _sale_pids = (
-            sale_product_ids
-            if sale_product_ids is not None
-            else {p.product_id.upper() for p in products}
-        )
-        results: list[SaleItem] = []
-
-        for product in products:
-            is_watched = self._matches_any(product.product_id, watched)
-
-            if not is_watched and (
-                self._is_ignored(product.product_id)
-                or self._matches_keyword(product.name)
-            ):
-                continue
-
-            has_known_discount = product.is_on_sale
-            passes_discount = (
-                not has_known_discount
-                or product.discount_percentage >= cfg.min_sale_percentage
-            )
-            passes_gender = self._matches_gender(product, gender_filter)
-            passes_size = self._matches_size(product, all_size_names)
-
-            if is_watched or (passes_discount and passes_gender and passes_size):
-                watched_variants = self._watched_by_product.get(
-                    product.product_id.upper(), [],
-                )
-                in_sale_feed = product.product_id.upper() in _sale_pids
-                results.append(
-                    self._to_sale_item(
-                        product, is_watched, all_size_names,
-                        watched_variants, in_sale_feed=in_sale_feed,
-                    )
-                )
-
-        results.sort(key=lambda s: s.discount_percentage, reverse=True)
-        return results
-
-    def _to_sale_item(
-        self,
-        product: UniqloProduct,
-        is_watched: bool,
-        size_filter: set[str],
-        watched_variants: list[WatchedVariant] | None = None,
-        *,
-        in_sale_feed: bool = True,
-    ) -> SaleItem:
-        rating = product.rating
-        matched_sizes = self._matching_sizes(product, size_filter)
-        urls = self._build_variant_urls(product, matched_sizes)
-
-        final_sizes = [s.name for s in matched_sizes]
-        final_urls = list(urls)
-        final_color_names = [""] * len(matched_sizes)
-
-        if watched_variants:
-            base = self._config.product_page_base
-            pid = product.product_id
-            pg = product.price_group
-            code_to_name = {s.display_code: s.name for s in product.sizes}
-            for wv in watched_variants:
-                size_name = code_to_name.get(wv.size)
-                if size_name is None:
-                    continue
-                wv_url = build_product_url(base, pid, pg, wv.color, wv.size)
-                if size_name in final_sizes:
-                    idx = final_sizes.index(size_name)
-                    final_urls[idx] = wv_url
-                    final_color_names[idx] = wv.color_name
-                else:
-                    final_sizes.append(size_name)
-                    final_urls.append(wv_url)
-                    final_color_names.append(wv.color_name)
-
-        return SaleItem(
-            product_id=product.product_id,
-            name=product.name,
-            original_price=product.prices.base.value,
-            sale_price=(
-                product.prices.promo.value if product.prices.promo else product.prices.base.value
-            ),
-            currency_symbol=product.currency_symbol,
-            discount_percentage=product.discount_percentage,
-            gender=product.gender_category,
-            available_sizes=final_sizes,
-            image_url=product.main_image_url,
-            color_images=product.color_image_map,
-            product_urls=final_urls,
-            color_names=final_color_names,
-            price_group=product.price_group,
-            rating_average=rating.get("average"),
-            rating_count=rating.get("count"),
-            is_watched=is_watched,
-            has_known_discount=product.is_on_sale or not in_sale_feed,
+    ) -> list:
+        """Delegate to :func:`filters.apply_filters`."""
+        return apply_filters(
+            products,
+            config=self._config,
+            watched_ids=self._watched_ids,
+            watched_by_product=self._watched_by_product,
+            ignored_ids=self._ignored_ids,
+            ignored_keywords=self._ignored_keywords,
+            sale_product_ids=sale_product_ids,
         )
 
-    def _normalised_size_set(self) -> set[str]:
-        """Build a single set of all configured size names, normalised to upper case."""
-        sizes = self._config.filters.sizes
-        combined = [*sizes.clothing, *sizes.pants, *sizes.shoes]
-        all_names = {n.upper() for n in combined}
-        if sizes.one_size:
-            all_names.add("ONE SIZE")
-        return all_names
+    async def _verify_stock(self, items: list) -> list:
+        """Delegate to :meth:`StockVerifier.verify`."""
+        return await self._stock_verifier.verify(items)
 
-    @staticmethod
-    def _matches_gender(product: UniqloProduct, gender_filter: set[str]) -> bool:
-        if not gender_filter:
-            return True
-        cat = product.gender_category.upper()
-        if cat == "UNISEX":
-            return True
-        return cat in gender_filter
+    def _variant_keys(self, item) -> set[str]:
+        """Delegate to :meth:`SeenVariantStore.current_variant_keys`."""
+        return self._state.current_variant_keys(item)
 
-    @staticmethod
-    def _matches_size(product: UniqloProduct, size_filter: set[str]) -> bool:
-        if not size_filter:
-            return True
-        return any(s.name.upper() in size_filter for s in product.sizes)
+    def _save_state(self, variants: set[str]) -> None:
+        """Persist *variants* using the existing sidecars.
 
-    @staticmethod
-    def _matching_sizes(
-        product: UniqloProduct, size_filter: set[str]
-    ) -> list[UniqloSize]:
-        """Return the product's in-stock sizes that match the configured filter.
-
-        The listing-level ``sizes`` array from the Uniqlo API already reflects
-        real-time online stock; sizes that are out of stock are omitted.  When a
-        size filter is configured we return only the intersection so the user
-        sees exactly which of their desired sizes are purchasable.  When no
-        filter is configured we return every available size.
+        Kept for backward compatibility with tests that drive the store
+        directly; production code calls :meth:`SeenVariantStore.save`
+        with a full :class:`StateSnapshot`.
         """
-        if not size_filter:
-            return list(product.sizes)
-        return [s for s in product.sizes if s.name.upper() in size_filter]
-
-    def _build_variant_urls(
-        self,
-        product: UniqloProduct,
-        sizes: list[UniqloSize],
-    ) -> list[str]:
-        """Build a direct URL for each matching size variant.
-
-        Uses the representative color as a preliminary default; the real
-        in-stock colour is resolved later by ``_verify_stock``.  The URL
-        query parameter style is determined by ``url_style`` in the
-        country's capabilities.
-        """
-        base = self._config.product_page_base
-        pid = product.product_id
-        pg = product.price_group
-        style = self._config.capabilities.url_style
-        color = product.representative_color_display_code
-
-        if style == "code":
-            colors = product.representative.get("color", {})
-            color_code = colors.get("code", "")
-            return [
-                build_product_url(
-                    base, pid, pg, color_code, s.code, url_style="code",
-                )
-                for s in sizes
-            ]
-
-        return [
-            build_product_url(base, pid, pg, color, s.display_code)
-            for s in sizes
-        ]
+        self._state.save(StateSnapshot(
+            variants=variants,
+            stock_buckets=self._disk_snapshot.stock_buckets,
+            last_seen=self._disk_snapshot.last_seen,
+        ))
 
     # ------------------------------------------------------------------
-    # Real-time stock verification
+    # Watched product helpers
     # ------------------------------------------------------------------
 
-    async def _verify_stock(self, items: list[SaleItem]) -> list[SaleItem]:
-        """Fetch real-time stock for each candidate and keep only in-stock sizes.
+    async def _include_watched_products(
+        self, sale_products: list[UniqloProduct],
+    ) -> list[UniqloProduct]:
+        """Fetch any watched products missing from the sale results."""
+        all_products: list[UniqloProduct] = list(sale_products)
+        if not self._watched_ids:
+            return all_products
 
-        For every matching size, pick a colour that is actually in stock and
-        rewrite the variant URL accordingly.  Items where no sizes survive
-        are dropped entirely.
+        sale_pids = {p.product_id.upper() for p in sale_products}
+        missing_upper = self._watched_ids - sale_pids
+        if not missing_upper:
+            return all_products
 
-        Countries whose ``stock_api`` capability is ``"none"`` (e.g. PH, TH)
-        skip the stock call but still fetch L2 variant data to build accurate
-        product URLs.  Items are never dropped for these countries.
-        """
-        if not items:
-            return items
-
-        unreliable_stock = self._config.capabilities.stock_api == "none"
-        sem = asyncio.Semaphore(_MAX_STOCK_CONCURRENCY)
-
-        async def _limited(item: SaleItem) -> SaleItem | None:
-            async with sem:
-                if unreliable_stock:
-                    return await self._enrich_from_l2(item)
-                return await self._verify_one(item)
-
-        tasks = [_limited(item) for item in items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        verified: list[SaleItem] = []
-        for item, result in zip(items, results):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "Stock check failed for %s, keeping listing data: %s",
-                    item.product_id, result,
-                )
-                verified.append(item)
-            elif result is not None:
-                verified.append(result)
-            else:
-                logger.debug("Dropped %s — no in-stock sizes", item.product_id)
-        return verified
-
-    async def _verify_one(self, item: SaleItem) -> SaleItem | None:
-        """Verify stock for a single SaleItem; returns *None* to drop it."""
-        l2s, stock_map = await asyncio.gather(
-            self._client.fetch_product_l2s(item.product_id, item.price_group),
-            self._client.fetch_variant_stock(item.product_id, item.price_group),
+        to_fetch: set[str] = set()
+        for pid_upper in missing_upper:
+            for wv in self._watched_by_product.get(pid_upper, []):
+                to_fetch.add(wv.id)
+        watched_extra = await self._client.fetch_products_by_ids(sorted(to_fetch))
+        logger.debug(
+            "Fetched %d watched product(s) not currently on sale",
+            len(watched_extra),
         )
-
-        if not l2s or not stock_map:
-            return item  # keep listing data when stock API is unavailable
-
-        wanted = {s.upper() for s in item.available_sizes}
-        base = self._config.product_page_base
-        style = self._config.capabilities.url_style
-
-        # Build a size-name → preferred-color map from watched variants.
-        watched = self._watched_by_product.get(item.product_id.upper(), [])
-        code_to_name: dict[str, str] = {}
-        for l2 in l2s:
-            sz = l2.get("size", {})
-            code_to_name[sz.get("displayCode", "")] = sz.get("name", "")
-        preferred_colors: dict[str, str] = {}
-        for wv in watched:
-            sn = code_to_name.get(wv.size, "").upper()
-            if sn and wv.color:
-                preferred_colors[sn] = wv.color
-
-        # For each wanted size, find the best in-stock colour variant.
-        verified_sizes: list[str] = []
-        verified_urls: list[str] = []
-        verified_color_names: list[str] = []
-        verified_quantities: list[int] = []
-        verified_statuses: list[str] = []
-
-        for size_name in item.available_sizes:
-            best = self._pick_in_stock_variant(
-                size_name,
-                l2s,
-                stock_map,
-                wanted,
-                preferred_color=preferred_colors.get(size_name.upper()),
-            )
-            if best is not None:
-                color_dc, size_dc, color_name, qty, status, color_code, size_code = best
-                verified_sizes.append(size_name)
-                verified_color_names.append(color_name)
-                verified_quantities.append(qty)
-                verified_statuses.append(status)
-                if style == "code":
-                    verified_urls.append(
-                        build_product_url(
-                            base, item.product_id, item.price_group,
-                            color_code, size_code, url_style="code",
-                        ),
-                    )
-                else:
-                    verified_urls.append(
-                        build_product_url(
-                            base, item.product_id, item.price_group,
-                            color_dc, size_dc,
-                        ),
-                    )
-
-        if not verified_sizes:
-            return None
-
-        return item.model_copy(update={
-            "available_sizes": verified_sizes,
-            "product_urls": verified_urls,
-            "color_names": verified_color_names,
-            "stock_quantities": verified_quantities,
-            "stock_statuses": verified_statuses,
-        })
-
-    async def _enrich_from_l2(self, item: SaleItem) -> SaleItem:
-        """Enrich URLs from L2 variant data without stock filtering.
-
-        Used for countries with unreliable stock APIs (``stock_api="none"``).
-        The v5 product-detail endpoint still provides accurate variant
-        data (colours, size codes) even when the stock endpoint does not.
-        """
-        l2s = await self._client.fetch_product_l2s(
-            item.product_id, item.price_group,
-        )
-        if not l2s:
-            return item
-        return self._rebuild_from_l2(
-            item, l2s, self._config.product_page_base,
-            url_style=self._config.capabilities.url_style,
-        )
+        all_products.extend(watched_extra)
+        return all_products
 
     @staticmethod
-    def _rebuild_from_l2(
-        item: SaleItem,
-        l2s: list[dict],
-        base: str,
-        *,
-        url_style: str = "display_code",
-    ) -> SaleItem:
-        """Rebuild URLs and color names from L2 data without stock filtering.
+    def _index_watched(
+        variants: list[WatchedVariant],
+    ) -> tuple[set[str], dict[str, list[WatchedVariant]]]:
+        """Index watched variants into a product-ID set and per-product map."""
+        by_product: dict[str, list[WatchedVariant]] = {}
+        for wv in variants:
+            by_product.setdefault(wv.id.upper(), []).append(wv)
+        return set(by_product.keys()), by_product
 
-        Picks the first colour variant per wanted size.  Stock data is
-        genuinely unknown in this path — filled with zeros / empty strings
-        so downstream code can't mistake an absent figure for a real
-        low-stock signal.
-        """
-        l2_by_size: dict[str, dict] = {}
-        for l2 in l2s:
-            sz_name = l2.get("size", {}).get("name", "").upper()
-            if sz_name and sz_name not in l2_by_size:
-                l2_by_size[sz_name] = l2
-
-        rebuilt_sizes: list[str] = []
-        rebuilt_urls: list[str] = []
-        rebuilt_colors: list[str] = []
-        for size_name in item.available_sizes:
-            l2 = l2_by_size.get(size_name.upper())
-            if l2:
-                color_obj = l2.get("color", {})
-                color_name = color_obj.get("name", "")
-                if url_style == "code":
-                    c_val = color_obj.get("code", "")
-                    s_val = l2.get("size", {}).get("code", "")
-                else:
-                    c_val = color_obj.get("displayCode", "")
-                    s_val = l2.get("size", {}).get("displayCode", "")
-                rebuilt_sizes.append(size_name)
-                rebuilt_urls.append(
-                    build_product_url(
-                        base, item.product_id, item.price_group,
-                        c_val, s_val, url_style=url_style,
-                    ),
-                )
-                rebuilt_colors.append(color_name)
-            else:
-                rebuilt_sizes.append(size_name)
-                rebuilt_urls.append("")
-                rebuilt_colors.append("")
-
-        return item.model_copy(update={
-            "available_sizes": rebuilt_sizes,
-            "product_urls": rebuilt_urls,
-            "color_names": rebuilt_colors,
-            "stock_quantities": [0] * len(rebuilt_sizes),
-            "stock_statuses": [""] * len(rebuilt_sizes),
-        })
+    # ------------------------------------------------------------------
+    # Legacy static method kept for test compatibility
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _pick_in_stock_variant(
@@ -658,43 +297,21 @@ class SaleChecker:
         wanted_sizes: set[str],
         preferred_color: str | None = None,
     ) -> tuple[str, str, str, int, str, str, str] | None:
-        """Find an in-stock colour for *size_name*.
+        """Thin wrapper around :func:`stock.pick_in_stock_variant`.
 
-        Returns ``(colorDisplayCode, sizeDisplayCode, colorName, quantity,
-        statusCode, colorCode, sizeCode)`` or *None*.  When
-        *preferred_color* is given (from a watched URL) and that colour is
-        in stock, it wins regardless of quantity.  Otherwise the
-        highest-quantity variant is chosen.
+        Returns a plain tuple for backward compatibility with existing
+        tests.  New code should use :func:`stock.pick_in_stock_variant`
+        which returns a :class:`StockVariant`.
         """
-        candidates: list[tuple[int, str, str, str, str, str, str]] = []
-        for l2 in l2s:
-            sz = l2.get("size", {})
-            if sz.get("name", "").upper() != size_name.upper():
-                continue
-            l2id = l2.get("l2Id", "")
-            stock = stock_map.get(l2id, {})
-            status = stock.get("statusCode", "")
-            if status in _IN_STOCK_STATUSES:
-                qty = stock.get("quantity", 0)
-                color_obj = l2.get("color", {})
-                color_dc = color_obj.get("displayCode", "")
-                color_name = color_obj.get("name", "")
-                size_dc = sz.get("displayCode", "")
-                color_code = color_obj.get("code", "")
-                size_code = sz.get("code", "")
-                candidates.append(
-                    (qty, color_dc, size_dc, color_name, status,
-                     color_code, size_code),
-                )
+        from uniqlo_sales_alerter.services.stock import pick_in_stock_variant
 
-        if not candidates:
+        sv = pick_in_stock_variant(
+            size_name, l2s, stock_map, wanted_sizes,
+            preferred_color=preferred_color,
+        )
+        if sv is None:
             return None
-
-        if preferred_color:
-            for qty, color_dc, size_dc, color_name, status, color_code, size_code in candidates:
-                if color_dc == preferred_color:
-                    return color_dc, size_dc, color_name, qty, status, color_code, size_code
-
-        candidates.sort(reverse=True)  # highest quantity first
-        qty, color_dc, size_dc, color_name, status, color_code, size_code = candidates[0]
-        return color_dc, size_dc, color_name, qty, status, color_code, size_code
+        return (
+            sv.color_display_code, sv.size_display_code, sv.color_name,
+            sv.quantity, sv.status, sv.color_code, sv.size_code,
+        )

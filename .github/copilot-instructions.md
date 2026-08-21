@@ -1,37 +1,40 @@
----
-description: Core project conventions for the Uniqlo Sales Alerter
-alwaysApply: true
----
-
 # Project Conventions
+
+Core conventions for the Uniqlo Sales Alerter. These apply to every request in this repository.
 
 ## After every change
 
-- Run `python -m pytest tests/ --tb=short` and fix any failures before finishing — **only when code in `src/` or `tests/` was modified**. Skip for documentation-only changes (`README.md`, `CHANGELOG.md`, `.cursor/rules/`, etc.).
+- Run `python -m pytest tests/ --tb=short` and fix any failures before finishing — **only when code in `src/` or `tests/` was modified**. Skip for documentation-only changes (`README.md`, `CHANGELOG.md`, `.github/instructions/`, `.cursor/rules/`, etc.).
 - Run `python -m ruff check src/ tests/` and fix any lint errors — **same rule: only when code was modified**.
 - Update `CHANGELOG.md` under the **current version** section for user-visible changes. The current version is the `version` field in `pyproject.toml` — never invent a new version number. Whenever the changelog is updated, also update the current version header's date to today's date (format: `## vX.Y.Z — YYYY-MM-DD`).
 - When fixing a bug that was introduced **within the current unreleased version**, do not add a new `Fixed` entry — instead edit the existing changelog entry for that feature so it describes the correct final behaviour. Only document a `Fixed` entry when the bug affected a **previously released** version. (If unsure whether a behaviour shipped in an earlier release, check `git log`/`git tag`.)
 - Update `README.md` when user-facing behaviour changes: new config options, new CLI flags, new API endpoints, changed notification format, new Docker examples, or anything a user would need to know.
 - When modifying `config.yaml`, add or preserve comments that explain any new or changed keys and list supported option values where applicable.
 
+## Before finishing
+
+If any user-visible changes were made to source files in `src/` during this session (new features, bug fixes, config options, UI changes, API endpoints), verify that `CHANGELOG.md` was also updated. If not, add the missing entry now. Internal-only changes (test refactoring, code cleanup with no behaviour change, documentation-only) do not need a changelog entry.
+
 ## Architecture
 
 - **Country capabilities**: Use `config.capabilities` (the `CountryCapabilities` registry in `config.py`) for any country-specific logic. Never hardcode country checks like `if country == "ph"`.
 - **Price display** has three states in all notification channels:
-  - `has_known_discount=True` and `discount_percentage > 0` -- strikethrough with percentage
-  - `has_known_discount=False` -- "Sale" label (limited countries, unknown discount)
-  - `has_known_discount=True` and `discount_percentage == 0` -- just the price, no label
+  - `has_known_discount=True` and `discount_percentage > 0` — strikethrough with percentage
+  - `has_known_discount=False` — "Sale" label (limited countries, unknown discount)
+  - `has_known_discount=True` and `discount_percentage == 0` — just the price, no label
 - **`has_known_discount`** is determined by whether the item came from the sale feed (`in_sale_feed`), not by the `promo` field.
 - **Stock verification**: Controlled by `CountryCapabilities.stock_api`. Countries with `stock_api="v5"` trust the stock data — items where all sizes are OOS are dropped. Countries with `stock_api="none"` (PH, TH) skip the stock call but still fetch L2 variant data for accurate product URLs; items are never dropped.
 - **Product URL style**: Controlled by `CountryCapabilities.url_style`. Countries with `url_style="display_code"` (default) use `/{priceGroup}?colorDisplayCode=XX&sizeDisplayCode=YYY`. Countries with `url_style="code"` (PH, TH) use `?colorCode=COLXX&sizeCode=SMAYYY` without a price-group path segment. `build_product_url` handles both.
 
 ## Validation for API and filtering changes
 
-- When any code in `src/` is modified that touches **data retrieval** (`clients/uniqlo.py`, `fetch_sale_products`, `_fetch_page`, `_fetch_page_v3`, `_normalize_v3_product`), **stock verification** (`_verify_stock`, `_verify_one`, `_enrich_from_l2`, `_rebuild_from_l2`), **filtering** (`_apply_filters`, `_matching_sizes`, `CountryCapabilities`, `listing_sources`), or **URL construction** (`build_product_url`, `_build_variant_urls`), you **must** also run the e2e country sweep before finishing:
+When any code in `src/` is modified that touches **data retrieval** (`clients/uniqlo.py`, `fetch_sale_products`, `_fetch_page`, `_fetch_page_v3`, `_normalize_v3_product`), **stock verification** (`_verify_stock`, `_verify_one`, `_enrich_from_l2`, `_rebuild_from_l2`), **filtering** (`_apply_filters`, `_matching_sizes`, `CountryCapabilities`, `listing_sources`), or **URL construction** (`build_product_url`, `_build_variant_urls`), you **must** also run the e2e country sweep before finishing:
 
-    python -m pytest tests/test_e2e_html_preview.py -m e2e -v --tb=short
+```
+python -m pytest tests/test_e2e_html_preview.py -m e2e -v --tb=short
+```
 
-- Fix any failures. These tests verify that every registered country returns real products, that PH/TH product counts are not silently truncated, and that generated product URLs use the correct format and point at resolvable products.
+Fix any failures. These tests verify that every registered country returns real products, that PH/TH product counts are not silently truncated, and that generated product URLs use the correct format and point at resolvable products.
 
 ## Config and settings
 

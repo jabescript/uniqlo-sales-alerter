@@ -1,0 +1,45 @@
+// Jenkinsfile.deploy — CD pipeline (mirror of .github/workflows/deploy.yml)
+//
+// Pulls the freshly built image and (re)runs it on the EC2 host, matching the customer's
+// "deploy the built image to our EC2 instance on AWS" step. Typically triggered after the
+// CI pipeline (Jenkinsfile) publishes the image — e.g. as a downstream job or on a main webhook.
+//
+// Required Jenkins credentials:
+//   - 'ec2-host'    : Secret text  -> the EC2 hostname / IP
+//   - 'ec2-ssh-key' : SSH private key for the deploy user
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME     = 'kequach/uniqlo-sales-alerter'
+        CONTAINER_NAME = 'uniqlo-alerter'
+        EC2_USER       = 'ec2-user'
+        EC2_HOST       = credentials('ec2-host')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Deploy to EC2') {
+            when { branch 'main' }
+            steps {
+                // Single quotes keep the 'ec2-host' secret out of the Groovy GString so Jenkins
+                // can still mask it; the agent shell (which the environment block populated)
+                // expands the variables. Never interpolate credentials into a double-quoted sh.
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh 'ssh -o StrictHostKeyChecking=accept-new "$EC2_USER@$EC2_HOST" "docker pull $IMAGE_NAME:latest && docker stop $CONTAINER_NAME 2>/dev/null || true && docker rm $CONTAINER_NAME 2>/dev/null || true && docker run -d --name $CONTAINER_NAME -p 8000:8000 -v alerter-state:/app/data -e STATE_FILE=/app/data/.seen_variants.json --restart unless-stopped $IMAGE_NAME:latest && docker image prune -f"'
+                }
+            }
+        }
+    }
+
+    post {
+        // Don't interpolate the EC2_HOST secret into the log (Jenkins would otherwise expose it).
+        success { echo "Deployed ${IMAGE_NAME}:latest to the EC2 host." }
+        failure { echo 'Deploy failed — check the EC2 host reachability and Jenkins credentials.' }
+    }
+}

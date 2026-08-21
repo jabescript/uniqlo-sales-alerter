@@ -5,9 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import quote
 
-from uniqlo_sales_alerter.models.products import SaleItem, is_low_stock
+from uniqlo_sales_alerter.models.products import (
+    ChangeReason,
+    SaleItem,
+    is_low_stock,
+    parse_variant_codes,
+)
 
 PROJECT_URL = "https://github.com/kequach/uniqlo-sales-alerter"
 
@@ -44,12 +49,12 @@ class FormattedPrice:
 
 def format_price(deal: SaleItem) -> FormattedPrice:
     """Derive display-ready price fields from *deal*."""
-    sym = deal.currency_symbol
-    sale = f"{sym}{deal.sale_price:.2f}"
+    symbol = deal.currency_symbol
+    sale = f"{symbol}{deal.sale_price:.2f}"
     if deal.has_known_discount and deal.discount_percentage > 0:
         return FormattedPrice(
             sale_text=sale,
-            original_text=f"{sym}{deal.original_price:.2f}",
+            original_text=f"{symbol}{deal.original_price:.2f}",
             discount_label=f"-{deal.discount_percentage:.0f}%",
             show_strikethrough=True,
             show_sale_badge=False,
@@ -153,13 +158,7 @@ def resolve_color_image(
     3. Return *fallback* (typically the listing's first/representative image).
     """
     if color_images and url:
-        import re
-
-        params = parse_qs(urlparse(url).query)
-        color_code = params.get("colorDisplayCode", [""])[0]
-        if not color_code:
-            raw = params.get("colorCode", [""])[0]
-            color_code = re.sub(r"^[A-Z]+", "", raw)
+        color_code, _ = parse_variant_codes(url)
         if color_code:
             if color_code in color_images:
                 return color_images[color_code]
@@ -173,7 +172,77 @@ def resolve_color_image(
 
 def unique_colors(deal: SaleItem) -> list[str]:
     """Deduplicated, non-empty colour names preserving insertion order."""
-    return list(dict.fromkeys(cn for cn in deal.color_names if cn))
+    return list(dict.fromkeys(name for name in deal.color_names if name))
+
+
+# ---------------------------------------------------------------------------
+# Per-variant change tags
+# ---------------------------------------------------------------------------
+
+# Render order — most informative first so the tag bar reads predictably.
+_REASON_ORDER: tuple[ChangeReason, ...] = (
+    ChangeReason.NEW,
+    ChangeReason.NEW_VARIANT,
+    ChangeReason.RESTOCKED,
+    ChangeReason.PRICE_DROP,
+    ChangeReason.PRICE_RISE,
+)
+
+_REASON_LABELS: dict[ChangeReason, str] = {
+    ChangeReason.NEW: "NEW",
+    ChangeReason.NEW_VARIANT: "NEW VARIANT",
+    ChangeReason.RESTOCKED: "RESTOCKED",
+    ChangeReason.PRICE_DROP: "PRICE DROP",
+    ChangeReason.PRICE_RISE: "PRICE RISE",
+}
+
+
+def format_change_tags(
+    reasons: list[ChangeReason],
+    *,
+    previous_discount: float | None = None,
+    new_discount: float | None = None,
+) -> list[str]:
+    """Render *reasons* into plain-text labels (one per reason).
+
+    For PRICE_DROP/PRICE_RISE, when both discounts are known the label is
+    augmented with ``"X% → Y%"``.  Channels join the returned labels
+    with their own separator (e.g. ``" · "``).
+    """
+    out: list[str] = []
+    seen: set[ChangeReason] = set()
+    ordered = sorted(
+        reasons,
+        key=lambda r: _REASON_ORDER.index(r) if r in _REASON_ORDER else 99,
+    )
+    for r in ordered:
+        if r in seen:
+            continue
+        seen.add(r)
+        label = _REASON_LABELS.get(r, r.value)
+        if r in (ChangeReason.PRICE_DROP, ChangeReason.PRICE_RISE) \
+                and previous_discount is not None and new_discount is not None:
+            label = f"{label} {previous_discount:.0f}% \u2192 {new_discount:.0f}%"
+        out.append(label)
+    return out
+
+
+def variant_change_text(deal: SaleItem, idx: int) -> str:
+    """Convenience: comma-free joined tag string for variant *idx*.
+
+    Returns ``""`` when there are no change reasons for this variant.
+    """
+    if idx >= len(deal.variant_changes):
+        return ""
+    reasons = deal.variant_changes[idx]
+    if not reasons:
+        return ""
+    tags = format_change_tags(
+        reasons,
+        previous_discount=deal.previous_discount,
+        new_discount=deal.discount_percentage if deal.has_known_discount else None,
+    )
+    return " \u00b7 ".join(tags)
 
 
 @runtime_checkable
@@ -192,27 +261,36 @@ class Notifier(Protocol):
 class DealActions:
     """Pre-built action URLs for a single deal."""
 
-    __slots__ = ("ignore_url", "watch_urls", "unwatch_url")
+    __slots__ = ("ignore_url", "watch_urls", "unwatch_urls")
 
     def __init__(self, deal: SaleItem, server_url: str) -> None:
         if not server_url:
             self.ignore_url = ""
             self.watch_urls: list[tuple[str, str]] = []
-            self.unwatch_url = ""
+            self.unwatch_urls: list[tuple[str, str]] = []
             return
         name_enc = quote(deal.name, safe="")
         self.ignore_url = (
             f"{server_url}/actions/ignore/{deal.product_id}?name={name_enc}"
         )
-        self.unwatch_url = (
-            f"{server_url}/actions/unwatch/{deal.product_id}?name={name_enc}"
-            if deal.is_watched else ""
-        )
+        self.unwatch_urls = []
+        if deal.is_watched:
+            for size_label, product_url in zip(
+                deal.available_sizes, deal.product_urls,
+            ):
+                color, size_code = parse_variant_codes(product_url)
+                unwatch_action = (
+                    f"{server_url}/actions/unwatch/{deal.product_id}"
+                    f"?name={name_enc}"
+                    f"&color={quote(color, safe='')}"
+                    f"&size={quote(size_code, safe='')}"
+                )
+                self.unwatch_urls.append((size_label, unwatch_action))
         self.watch_urls = []
-        for sz, prod_url in zip(deal.available_sizes, deal.product_urls):
-            url_enc = quote(prod_url, safe="")
-            watch = (
+        for size_label, product_url in zip(deal.available_sizes, deal.product_urls):
+            encoded_url = quote(product_url, safe="")
+            watch_action = (
                 f"{server_url}/actions/watch/{deal.product_id}"
-                f"?name={name_enc}&url={url_enc}"
+                f"?name={name_enc}&url={encoded_url}"
             )
-            self.watch_urls.append((sz, watch))
+            self.watch_urls.append((size_label, watch_action))

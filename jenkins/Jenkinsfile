@@ -1,0 +1,86 @@
+// Jenkinsfile — CI pipeline (mirror of .github/workflows/docker-publish.yml)
+//
+// Flow: Test + Lint  ->  live E2E  ->  build & push a multi-arch Docker image to Docker Hub.
+// This is intentionally kept alongside the GitHub Actions workflow so it can be used as the
+// input for a GitLab CI/CD migration (e.g. GitLab Duo "Convert to GitLab CI/CD").
+//
+// Required Jenkins credentials:
+//   - 'dockerhub'  : "Username with password" credential for Docker Hub (-> DOCKERHUB_USR / _PSW)
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY   = 'docker.io'
+        IMAGE_NAME = 'kequach/uniqlo-sales-alerter'
+        DOCKERHUB  = credentials('dockerhub')   // Credentials plugin (mirrors GH Actions secrets)
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    stages {
+        stage('Test & Lint') {
+            agent { docker { image 'python:3.11-slim'; reuseNode true } }
+            steps {
+                sh 'pip install -e ".[dev]"'
+                sh 'python -m pytest tests/ -v --junitxml=report.xml'
+                sh 'python -m ruff check src/ tests/'
+            }
+            post {
+                always { junit 'report.xml' }
+            }
+        }
+
+        stage('E2E (live Uniqlo API)') {
+            agent { docker { image 'python:3.11-slim'; reuseNode true } }
+            steps {
+                sh 'pip install -e ".[dev]"'
+                sh 'python -m pytest -m e2e -v'
+            }
+        }
+
+        stage('Build & Push image') {
+            // Publish on main and on version tags (v*), mirroring the GH Actions trigger.
+            when { anyOf { branch 'main'; buildingTag() } }
+            steps {
+                script {
+                    // Mirror docker/metadata-action tagging:
+                    //   - version tag v1.2.3  ->  1.2.3, 1.2, <short-sha>   (no 'latest')
+                    //   - main branch         ->  latest, main, <short-sha>
+                    def shortSha = env.GIT_COMMIT.take(7)
+                    def tags = []
+                    if (env.TAG_NAME) {
+                        def version = env.TAG_NAME.replaceFirst(/^v/, '')
+                        def parts = version.tokenize('.')
+                        tags << version
+                        if (parts.size() >= 2) {
+                            tags << "${parts[0]}.${parts[1]}"
+                        }
+                        tags << shortSha
+                    } else {
+                        tags << 'latest'
+                        tags << env.BRANCH_NAME
+                        tags << shortSha
+                    }
+                    def tagArgs = tags.collect { "-t ${IMAGE_NAME}:${it}" }.join(' ')
+
+                    sh 'echo "$DOCKERHUB_PSW" | docker login "$REGISTRY" -u "$DOCKERHUB_USR" --password-stdin'
+                    // Enable multi-arch builds (setup-buildx-action equivalent).
+                    sh 'docker run --privileged --rm tonistiigi/binfmt --install all || true'
+                    sh 'docker buildx create --use --name multiarch || docker buildx use multiarch'
+                    sh "docker buildx build --platform linux/amd64,linux/arm64 ${tagArgs} --push ."
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker logout "$REGISTRY" || true'
+        }
+    }
+}

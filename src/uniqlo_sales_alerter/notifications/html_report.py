@@ -18,6 +18,7 @@ from uniqlo_sales_alerter.notifications.base import (
     format_stock_suffix,
     resolve_color_image,
     unique_colors,
+    variant_change_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,21 @@ _REPORT_CSS = """\
   .size-chip.low-stock .stock-qty {
     opacity: .85;
   }
+  .size-chip .change-tag {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    background: #fff;
+    color: var(--uq-red);
+    border-radius: 2px;
+    font-size: .62rem;
+    font-weight: 800;
+    letter-spacing: .05em;
+  }
+  .size-chip:not(.low-stock) .change-tag {
+    background: var(--uq-red);
+    color: #fff;
+  }
 
   /* ── Watch chip (per-size star) ───────────────── */
   .watch-chip {
@@ -255,70 +271,77 @@ def _render_card(
         if best_image and first_url else img_inner
     )
 
-    qtys = deal.stock_quantities
-    statuses = deal.stock_statuses
-
-    def _size_chip(sz: str, url: str, i: int) -> str:
-        qty = qtys[i] if i < len(qtys) else 0
-        status = statuses[i] if i < len(statuses) else ""
-        stock_span, is_low = _stock_inline_html(qty, status, low_stock_threshold)
-        cls = "size-chip low-stock" if is_low else "size-chip"
-        return f'<a class="{cls}" href="{url}" target="_blank">{sz}{stock_span}</a>'
+    def _size_chip(size_label: str, url: str, i: int) -> str:
+        variant = deal.variant_at(i)
+        stock_span, is_low = _stock_inline_html(
+            variant.quantity, variant.status, low_stock_threshold,
+        )
+        css_class = "size-chip low-stock" if is_low else "size-chip"
+        change_text = variant_change_text(deal, i)
+        change_span = (
+            f'<span class="change-tag">{html_mod.escape(change_text)}</span>'
+            if change_text else ""
+        )
+        return (
+            f'<a class="{css_class}" href="{url}" target="_blank">'
+            f'{size_label}{stock_span}{change_span}</a>'
+        )
 
     actions = DealActions(deal, server_url)
-    if actions.unwatch_url:
-        size_parts = [
-            _size_chip(sz, url, i)
-            for i, (sz, url) in enumerate(
-                zip(deal.available_sizes, deal.product_urls),
-            )
-        ]
+    if actions.unwatch_urls:
+        unwatch_map = dict(actions.unwatch_urls)
+        size_parts = []
+        for i, (size_label, url) in enumerate(
+            zip(deal.available_sizes, deal.product_urls),
+        ):
+            chip = _size_chip(size_label, url, i)
+            unwatch_url = unwatch_map.get(size_label)
+            if unwatch_url:
+                chip += (
+                    f'<a class="watch-chip" href="{unwatch_url}" '
+                    f'target="_blank" title="Unwatch {size_label}">&#9733;</a>'
+                )
+            size_parts.append(chip)
     else:
         watch_map = dict(actions.watch_urls)
         size_parts = []
-        for i, (sz, url) in enumerate(
+        for i, (size_label, url) in enumerate(
             zip(deal.available_sizes, deal.product_urls),
         ):
-            chip = _size_chip(sz, url, i)
-            wurl = watch_map.get(sz)
-            if wurl:
+            chip = _size_chip(size_label, url, i)
+            watch_url = watch_map.get(size_label)
+            if watch_url:
                 chip += (
-                    f'<a class="watch-chip" href="{wurl}" '
-                    f'target="_blank" title="Watch {sz}">&#9734;</a>'
+                    f'<a class="watch-chip" href="{watch_url}" '
+                    f'target="_blank" title="Watch {size_label}">&#9734;</a>'
                 )
             size_parts.append(chip)
     size_links = " ".join(size_parts) or ", ".join(deal.available_sizes)
 
-    fp = format_price(deal)
-    if fp.show_strikethrough:
+    price = format_price(deal)
+    if price.show_strikethrough:
         price_row = (
-            f'<span class="price-old">{fp.original_text}</span>'
+            f'<span class="price-old">{price.original_text}</span>'
             f'<span class="arrow">&rarr;</span>'
-            f'<span class="price-sale">{fp.sale_text}</span>'
-            f'<span class="discount">{fp.discount_label}</span>'
+            f'<span class="price-sale">{price.sale_text}</span>'
+            f'<span class="discount">{price.discount_label}</span>'
         )
-    elif fp.show_sale_badge:
+    elif price.show_sale_badge:
         price_row = (
-            f'<span class="price-sale">{fp.sale_text}</span>'
-            f'<span class="discount">{fp.discount_label}</span>'
+            f'<span class="price-sale">{price.sale_text}</span>'
+            f'<span class="discount">{price.discount_label}</span>'
         )
     else:
-        price_row = f'<span class="price-sale">{fp.sale_text}</span>'
+        price_row = f'<span class="price-sale">{price.sale_text}</span>'
 
     action_row = ""
     if actions.ignore_url:
-        unwatch_btn = (
-            f'<a class="action-btn action-unwatch" '
-            f'href="{actions.unwatch_url}" '
-            f'target="_blank">Unwatch</a>'
-        ) if actions.unwatch_url else ""
         action_row = (
             '<div class="actions-row">'
             f'<a class="action-btn action-ignore" '
             f'href="{actions.ignore_url}" '
             f'target="_blank">Ignore</a>'
-            + unwatch_btn
-            + '</div>'
+            '</div>'
         )
 
     colors = unique_colors(deal)
@@ -371,7 +394,7 @@ def _build_report(
     )
     kw_line = ""
     if ignored_keywords:
-        escaped = ", ".join(html_mod.escape(k) for k in ignored_keywords)
+        escaped = ", ".join(html_mod.escape(keyword) for keyword in ignored_keywords)
         kw_line = f"<br/>Ignored keywords: {escaped}"
     return f"""<!DOCTYPE html>
 <html lang="en">

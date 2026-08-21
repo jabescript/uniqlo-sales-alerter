@@ -72,6 +72,11 @@ class TestAppConfig:
         cfg = AppConfig()
         assert cfg.notifications.low_stock_threshold == 3
         assert cfg.notifications.suppress_low_stock_alerts is False
+        assert cfg.notifications.alert_reasons == [
+            "new",
+            "new_variant",
+            "price_drop",
+        ]
 
     def test_low_stock_configured(self):
         cfg = AppConfig.model_validate({
@@ -87,6 +92,33 @@ class TestAppConfig:
         with pytest.raises(ValueError):
             AppConfig.model_validate({
                 "notifications": {"low_stock_threshold": -1},
+            })
+
+    def test_alert_reasons_configured_and_normalised(self):
+        cfg = AppConfig.model_validate({
+            "notifications": {
+                "alert_reasons": [
+                    "NEW",
+                    "new variant",
+                    "restocked",
+                    "price-drop",
+                    "price_rise",
+                    "NEW",
+                ],
+            },
+        })
+        assert cfg.notifications.alert_reasons == [
+            "new",
+            "new_variant",
+            "restocked",
+            "price_drop",
+            "price_rise",
+        ]
+
+    def test_alert_reasons_reject_unknown(self):
+        with pytest.raises(ValueError):
+            AppConfig.model_validate({
+                "notifications": {"alert_reasons": ["discount_changed"]},
             })
 
     def test_ignored_keywords_default(self):
@@ -231,9 +263,15 @@ class TestConfigFromEnv:
     def test_low_stock_vars(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("NOTIFY_LOW_STOCK_THRESHOLD", "7")
         monkeypatch.setenv("NOTIFY_SUPPRESS_LOW_STOCK_ALERTS", "true")
+        monkeypatch.setenv("NOTIFY_ALERT_REASONS", "new,restocked,price_rise")
         result = _config_from_env()
         assert result["notifications"]["low_stock_threshold"] == 7
         assert result["notifications"]["suppress_low_stock_alerts"] is True
+        assert result["notifications"]["alert_reasons"] == [
+            "new",
+            "restocked",
+            "price_rise",
+        ]
 
 
 class TestLoadConfigEnvVars:

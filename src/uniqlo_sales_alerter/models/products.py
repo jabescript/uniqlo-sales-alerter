@@ -2,13 +2,44 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
 _DEFAULT_CURRENCY = "€"
 _LOW_STOCK_STATUS = "LOW_STOCK"
+_ALPHA_PREFIX_RE = re.compile(r"^[A-Z]+")
+
+
+class ChangeReason(str, Enum):
+    """Why a variant is being reported in a notification."""
+
+    NEW = "NEW"
+    NEW_VARIANT = "NEW_VARIANT"
+    PRICE_DROP = "PRICE_DROP"
+    PRICE_RISE = "PRICE_RISE"
+    RESTOCKED = "RESTOCKED"
+    # Backward-compatible alias: low-stock -> healthy is now RESTOCKED.
+    BACK_ABOVE_LOW = "RESTOCKED"
+
+
+def stock_bucket(qty: int, status: str, threshold: int) -> str:
+    """Classify a variant's stock into ``"in"``, ``"low"``, or ``"oos"``.
+
+    ``oos`` is returned only when quantity data is missing or zero; any
+    positive quantity is either ``low`` (per :func:`is_low_stock`) or
+    ``in``.  Used by the state diff to detect restock transitions.
+    """
+    if qty <= 0 and status != _LOW_STOCK_STATUS:
+        return "oos"
+    if is_low_stock(qty, status, threshold):
+        return "low"
+    return "in"
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +65,52 @@ def is_low_stock(qty: int, status: str, threshold: int) -> bool:
     if threshold > 0:
         return 0 < qty <= threshold
     return status == _LOW_STOCK_STATUS
+
+
+# ---------------------------------------------------------------------------
+# Variant types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StockVariant:
+    """A single colour+size variant with verified stock data.
+
+    Replaces the raw tuple formerly returned by stock-verification helpers,
+    giving each field a readable name.
+    """
+
+    color_display_code: str
+    size_display_code: str
+    color_name: str
+    quantity: int
+    status: str
+    color_code: str
+    size_code: str
+
+
+def parse_variant_codes(url: str) -> tuple[str, str]:
+    """Extract ``(color, size)`` display codes from a Uniqlo product URL.
+
+    Handles both URL styles:
+
+    * ``colorDisplayCode``/``sizeDisplayCode`` — returned as-is.
+    * ``colorCode``/``sizeCode`` — alphabetic prefix stripped so the
+      returned values are always short display-code form.
+    """
+    params = parse_qs(urlparse(url).query)
+
+    color = params.get("colorDisplayCode", [""])[0]
+    if not color:
+        raw = params.get("colorCode", [""])[0]
+        color = _ALPHA_PREFIX_RE.sub("", raw)
+
+    size = params.get("sizeDisplayCode", [""])[0]
+    if not size:
+        raw = params.get("sizeCode", [""])[0]
+        size = _ALPHA_PREFIX_RE.sub("", raw)
+
+    return color, size
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +245,7 @@ class UniqloProduct(BaseModel, populate_by_name=True):
 
     @property
     def size_names(self) -> list[str]:
-        return [s.name for s in self.sizes]
+        return [size.name for size in self.sizes]
 
     @property
     def currency_symbol(self) -> str:
@@ -198,6 +275,22 @@ class UniqloApiResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class VariantInfo:
+    """Per-variant data extracted from the parallel lists in :class:`SaleItem`.
+
+    Provides safe, named access to what is otherwise a set of positional
+    lookups across ``available_sizes``, ``product_urls``, ``color_names``,
+    ``stock_quantities``, and ``stock_statuses``.
+    """
+
+    size: str
+    url: str
+    color_name: str
+    quantity: int
+    status: str
+
+
 class SaleItem(BaseModel):
     """A product that passed all configured filters."""
 
@@ -220,6 +313,18 @@ class SaleItem(BaseModel):
     rating_count: int | None = None
     is_watched: bool = False
     has_known_discount: bool = True
+    variant_changes: list[list[ChangeReason]] = Field(default_factory=list)
+    previous_discount: float | None = None
+
+    def variant_at(self, index: int) -> VariantInfo:
+        """Return variant data at *index* with safe defaults for sparse lists."""
+        return VariantInfo(
+            size=self.available_sizes[index] if index < len(self.available_sizes) else "",
+            url=self.product_urls[index] if index < len(self.product_urls) else "",
+            color_name=self.color_names[index] if index < len(self.color_names) else "",
+            quantity=self.stock_quantities[index] if index < len(self.stock_quantities) else 0,
+            status=self.stock_statuses[index] if index < len(self.stock_statuses) else "",
+        )
 
 
 class SaleCheckResult(BaseModel):

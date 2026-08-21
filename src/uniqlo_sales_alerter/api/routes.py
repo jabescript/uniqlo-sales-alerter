@@ -83,20 +83,20 @@ async def get_sales(
     if gender is not None:
         gender_upper = gender.upper()
         deals = [
-            d for d in deals
-            if d.gender.upper() in (gender_upper, "UNISEX")
+            deal for deal in deals
+            if deal.gender.upper() in (gender_upper, "UNISEX")
         ]
     if min_discount is not None:
-        deals = [d for d in deals if d.discount_percentage >= min_discount]
+        deals = [deal for deal in deals if deal.discount_percentage >= min_discount]
 
-    deal_ids = {d.product_id for d in deals}
+    deal_ids = {deal.product_id for deal in deals}
     return SaleCheckResult(
         checked_at=result.checked_at,
         total_products_scanned=result.total_products_scanned,
         total_on_sale=result.total_on_sale,
         matching_deals=deals,
         new_deals=[
-            d for d in result.new_deals if d.product_id in deal_ids
+            deal for deal in result.new_deals if deal.product_id in deal_ids
         ],
     )
 
@@ -267,15 +267,33 @@ async def action_unwatch(
     product_id: str,
     app_state=Depends(_get_app_state),
     name: str = Query(""),
+    color: str = Query(""),
+    size: str = Query(""),
 ) -> HTMLResponse:
-    """Remove a product from the watch list (browser-friendly)."""
+    """Remove a variant from the watch list (browser-friendly).
+
+    When *color* and *size* are provided, only the matching variant is
+    removed.  Without them, all watched variants for the product are
+    removed (backward-compatible fallback).
+    """
     current = app_state.config
     pid_upper = product_id.upper()
     before = len(current.filters.watched_variants)
-    kept = [
-        wv for wv in current.filters.watched_variants
-        if wv.id.upper() != pid_upper
-    ]
+
+    if color or size:
+        kept = [
+            wv for wv in current.filters.watched_variants
+            if not (
+                wv.id.upper() == pid_upper
+                and wv.color == color
+                and wv.size == size
+            )
+        ]
+    else:
+        kept = [
+            wv for wv in current.filters.watched_variants
+            if wv.id.upper() != pid_upper
+        ]
 
     if len(kept) == before:
         return _action_page(

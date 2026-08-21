@@ -10,6 +10,7 @@ import pytest
 from uniqlo_sales_alerter.config import AppConfig, EmailChannelConfig, TelegramChannelConfig
 from uniqlo_sales_alerter.models.products import is_low_stock
 from uniqlo_sales_alerter.notifications.base import (
+    DealActions,
     Notifier,
     _derive_color_image,
     format_rating,
@@ -326,7 +327,7 @@ class TestTelegramNotifierSend:
         markup = bot.send_photo.call_args.kwargs["reply_markup"]
         buttons = [btn for row in markup.inline_keyboard for btn in row]
         labels = [btn.text for btn in buttons]
-        assert "Unwatch" in labels
+        assert any(label.startswith("Unwatch ") for label in labels)
         assert not any(label.startswith("Watch ") for label in labels)
 
     @pytest.mark.asyncio
@@ -958,3 +959,93 @@ class TestIgnoredKeywordsFooter:
             assert "Ignored keywords" not in out, (
                 f"{name} should not show keyword label when list is empty"
             )
+
+
+class TestDealActionsUnwatch:
+    """DealActions should generate per-variant unwatch URLs with color+size."""
+
+    _SERVER = "http://localhost:8000"
+
+    def test_watched_deal_generates_per_size_unwatch_urls(self):
+        deal = _sample_deal(is_watched=True)
+        actions = DealActions(deal, self._SERVER)
+        assert len(actions.unwatch_urls) == len(deal.available_sizes)
+        assert actions.watch_urls  # watch URLs are still generated
+
+        for size_label, url in actions.unwatch_urls:
+            assert size_label in deal.available_sizes
+            assert "color=" in url
+            assert "size=" in url
+            assert f"/unwatch/{deal.product_id}" in url
+
+    def test_non_watched_deal_has_no_unwatch_urls(self):
+        deal = _sample_deal(is_watched=False)
+        actions = DealActions(deal, self._SERVER)
+        assert actions.unwatch_urls == []
+        assert len(actions.watch_urls) == len(deal.available_sizes)
+
+    def test_unwatch_urls_encode_correct_color_and_size(self):
+        deal = _sample_deal(
+            is_watched=True,
+            available_sizes=["M"],
+            product_urls=[
+                "https://www.uniqlo.com/de/de/products/E001/00"
+                "?colorDisplayCode=09&sizeDisplayCode=004",
+            ],
+        )
+        actions = DealActions(deal, self._SERVER)
+        assert len(actions.unwatch_urls) == 1
+        _, url = actions.unwatch_urls[0]
+        assert "color=09" in url
+        assert "size=004" in url
+
+    def test_no_unwatch_urls_without_server_url(self):
+        deal = _sample_deal(is_watched=True)
+        actions = DealActions(deal, "")
+        assert actions.unwatch_urls == []
+
+
+class TestChangeTagRendering:
+    """Per-variant change tags surface in every notification channel."""
+
+    @staticmethod
+    def _deal_with_changes():
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        return _sample_deal(
+            available_sizes=["S", "M", "L"],
+            variant_changes=[
+                [ChangeReason.NEW],
+                [ChangeReason.PRICE_DROP],
+                [ChangeReason.RESTOCKED, ChangeReason.PRICE_RISE],
+            ],
+            previous_discount=20.0,
+            discount_percentage=50.0,
+        )
+
+    @pytest.mark.parametrize("channel", list(_RENDERERS))
+    def test_channel_renders_change_tags(self, channel):
+        deal = self._deal_with_changes()
+        rendered = _RENDERERS[channel](deal)
+        assert "NEW" in rendered
+        assert "PRICE DROP" in rendered
+        assert "20% \u2192 50%" in rendered  # arrow + before/after
+        assert "RESTOCKED" in rendered
+
+    @pytest.mark.parametrize("channel", list(_RENDERERS))
+    def test_no_tag_when_no_changes(self, channel):
+        deal = _sample_deal()
+        rendered = _RENDERERS[channel](deal)
+        # Plain deals without variant_changes must not have leftover labels.
+        assert "PRICE DROP" not in rendered
+        assert "RESTOCKED" not in rendered
+
+    def test_format_change_tags_orders_and_labels(self):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        from uniqlo_sales_alerter.notifications.base import format_change_tags
+        tags = format_change_tags(
+            [ChangeReason.PRICE_DROP, ChangeReason.NEW],
+            previous_discount=30, new_discount=60,
+        )
+        # NEW comes first per render order.
+        assert tags == ["NEW", "PRICE DROP 30% \u2192 60%"]
+

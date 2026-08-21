@@ -1,0 +1,54 @@
+name: Deploy to EC2 (example — disabled)
+
+# ⚠️ EXAMPLE ONLY — this workflow is intentionally disabled and never deploys.
+#
+# It documents how the customer's "merge to main -> build -> deploy to EC2" flow
+# would be wired with GitHub Actions, but it is kept inert:
+#   * the automatic `workflow_run` trigger is commented out, and
+#   * the `deploy` job is guarded with `if: ${{ false }}`, so even a manual
+#     "Run workflow" is skipped without ever touching the EC2 host.
+#
+# To make it live: uncomment the triggers below, remove the `if: ${{ false }}`
+# guard on the job, and set the EC2_HOST / EC2_USER / EC2_SSH_KEY secrets.
+
+on:
+  # Real deployment triggers (disabled — uncomment to enable):
+  # workflow_run:
+  #   workflows: ["Build and push Docker image"]
+  #   types: [completed]
+  #   branches: [main]
+  workflow_dispatch: {}   # keeps this a valid workflow; the job below never runs
+
+env:
+  IMAGE_NAME: kequach/uniqlo-sales-alerter
+  CONTAINER_NAME: uniqlo-alerter
+
+jobs:
+  deploy:
+    # EXAMPLE ONLY — never executes. To enable, restore the trigger above and
+    # replace this guard with the real condition:
+    #   if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy container on EC2 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # fingerprint: ${{ secrets.EC2_HOST_FINGERPRINT }}   # pin the host key in production
+          script: |
+            set -e
+            docker pull ${{ env.IMAGE_NAME }}:latest
+            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm   ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              -p 8000:8000 \
+              -v alerter-state:/app/data \
+              -e STATE_FILE=/app/data/.seen_variants.json \
+              --restart unless-stopped \
+              ${{ env.IMAGE_NAME }}:latest
+            docker image prune -f

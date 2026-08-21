@@ -40,9 +40,9 @@ def _resolve_env_vars(value: object) -> object:
 
         return _ENV_VAR_RE.sub(_replacer, value)
     if isinstance(value, dict):
-        return {k: _resolve_env_vars(v) for k, v in value.items()}
+        return {key: _resolve_env_vars(val) for key, val in value.items()}
     if isinstance(value, list):
-        return [_resolve_env_vars(v) for v in value]
+        return [_resolve_env_vars(item) for item in value]
     return value
 
 
@@ -77,6 +77,8 @@ _ENV_MAP: list[tuple[str, list[str], str]] = [
     ("PREVIEW_HTML",                ["notifications", "preview_html"],           "bool"),
     ("NOTIFY_LOW_STOCK_THRESHOLD",       ["notifications", "low_stock_threshold"],       "int"),
     ("NOTIFY_SUPPRESS_LOW_STOCK_ALERTS", ["notifications", "suppress_low_stock_alerts"], "bool"),
+    ("NOTIFY_STATE_RETENTION_DAYS",      ["notifications", "state_retention_days"],      "int"),
+    ("NOTIFY_ALERT_REASONS",             ["notifications", "alert_reasons"],             "list"),
     # -- telegram --
     ("TELEGRAM_ENABLED",            ["notifications", "channels", "telegram", "enabled"],   "bool"),
     ("TELEGRAM_BOT_TOKEN",          ["notifications", "channels", "telegram", "bot_token"], "str"),
@@ -213,7 +215,7 @@ def parse_uniqlo_url(url: str) -> dict[str, str]:
     from urllib.parse import parse_qs, urlparse
 
     parsed = urlparse(url)
-    parts = [p for p in parsed.path.split("/") if p]
+    parts = [segment for segment in parsed.path.split("/") if segment]
     pid = pg = ""
     for i, seg in enumerate(parts):
         if seg == "products" and i + 1 < len(parts):
@@ -293,7 +295,7 @@ class FilterConfig(BaseModel):
     def _coerce_ignored(cls, v: Any) -> Any:
         """Allow env-var shorthand: plain ID strings become objects."""
         if isinstance(v, list):
-            return [{"id": x} if isinstance(x, str) else x for x in v]
+            return [{"id": entry} if isinstance(entry, str) else entry for entry in v]
         return v
 
     @field_validator("ignored_keywords", mode="before")
@@ -342,6 +344,14 @@ class ChannelsConfig(BaseModel):
     email: EmailChannelConfig = Field(default_factory=EmailChannelConfig)
 
 
+AlertReason = Literal["new", "new_variant", "restocked", "price_drop", "price_rise"]
+_DEFAULT_ALERT_REASONS: tuple[AlertReason, ...] = (
+    "new",
+    "new_variant",
+    "price_drop",
+)
+
+
 class NotificationConfig(BaseModel):
     """Notification behaviour and channel configuration."""
 
@@ -351,7 +361,34 @@ class NotificationConfig(BaseModel):
     check_on_startup: bool = True
     low_stock_threshold: int = Field(default=3, ge=0)
     suppress_low_stock_alerts: bool = False
+    state_retention_days: int = Field(default=30, ge=0)
+    alert_reasons: list[AlertReason] = Field(
+        default_factory=lambda: list(_DEFAULT_ALERT_REASONS),
+    )
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
+
+    @field_validator("alert_reasons", mode="before")
+    @classmethod
+    def _normalise_alert_reasons(cls, v: Any) -> Any:
+        """Accept comma-separated/env-style values and normalise labels."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            items = [item.strip() for item in v.split(",")]
+        elif isinstance(v, list):
+            items = v
+        else:
+            return v
+        return [
+            str(item).strip().lower().replace("-", "_").replace(" ", "_")
+            for item in items
+            if str(item).strip()
+        ]
+
+    @field_validator("alert_reasons")
+    @classmethod
+    def _dedupe_alert_reasons(cls, v: list[AlertReason]) -> list[AlertReason]:
+        return list(dict.fromkeys(v))
 
 
 class QuietHoursConfig(BaseModel):
@@ -455,7 +492,7 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def _normalise_gender(self) -> "AppConfig":
-        self.filters.gender = [g.upper() for g in self.filters.gender]
+        self.filters.gender = [gender.upper() for gender in self.filters.gender]
         return self
 
     @property
@@ -481,8 +518,8 @@ class AppConfig(BaseModel):
 
     @property
     def client_id(self) -> str:
-        cc = self._CLIENT_ID_COUNTRY_OVERRIDES.get(self.country_code, self.country_code)
-        return f"uq.{cc}.web-spa"
+        country = self._CLIENT_ID_COUNTRY_OVERRIDES.get(self.country_code, self.country_code)
+        return f"uq.{country}.web-spa"
 
     @property
     def product_page_base(self) -> str:
@@ -585,11 +622,11 @@ def _deep_update_yaml(target: dict, source: dict) -> None:
 
 def _write_yaml(data: dict[str, Any], path: Path) -> None:
     """Write config to YAML, preserving existing comments when possible."""
-    rt = YAML()
-    rt.preserve_quotes = True
+    yaml_writer = YAML()
+    yaml_writer.preserve_quotes = True
 
     if path.exists():
-        existing = rt.load(path.read_text(encoding="utf-8"))
+        existing = yaml_writer.load(path.read_text(encoding="utf-8"))
         if isinstance(existing, dict):
             _deep_update_yaml(existing, data)
             to_write = existing
@@ -598,8 +635,8 @@ def _write_yaml(data: dict[str, Any], path: Path) -> None:
     else:
         to_write = data
 
-    with path.open("w", encoding="utf-8") as fh:
-        rt.dump(to_write, fh)
+    with path.open("w", encoding="utf-8") as output:
+        yaml_writer.dump(to_write, output)
     logger.debug("Configuration written to %s", path)
 
 

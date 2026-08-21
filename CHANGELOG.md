@@ -4,6 +4,35 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
+## v1.6.0 — 2026-08-21
+
+### New features
+
+- **Per-variant change tags** — every notification channel (email, Telegram, console, HTML report) now labels each reported variant with *why* it appears: `NEW`, `NEW VARIANT`, `RESTOCKED`, `PRICE DROP`, or `PRICE RISE`. Price tags include the previous-to-current percentage delta (e.g. `PRICE DROP 20% → 35%`).
+- **State retention with auto-pruning** — a new `notifications.state_retention_days` setting (default `30`) controls how long the alerter remembers variants that have gone out of stock or no longer match before forgetting them. Once forgotten, the next reappearance counts as `NEW` again. Variants currently in stock are never pruned. Set to `0` to disable pruning and keep history forever. Env var: `NOTIFY_STATE_RETENTION_DAYS`. Configurable via the settings UI under *Notification Triggers* → *State Retention (days)*.
+- **Restock and stock-bucket transitions** — state now tracks each variant's stock bucket (`in` / `low` / `oos`) in addition to the price seen, so transitions from out-of-stock to in-stock and low-stock to normal-stock both fire a `RESTOCKED` tag, independent of price changes.
+- **Configurable alert categories** - `notifications.alert_reasons` controls which change reasons can send change-based notifications. Defaults are `new`, `new_variant`, and `price_drop`; `restocked` and `price_rise` are opt-in.
+
+### Fixed
+
+- **403 Forbidden from the Uniqlo API** — Uniqlo's Akamai Bot Manager began fingerprinting the TLS/JA3 handshake of `httpx` requests and blocking them outright, regardless of headers or user agent. `UniqloClient` now uses `curl_cffi` (plain libcurl TLS, no browser impersonation) exclusively for all Uniqlo API requests, replacing `httpx`, so sale checks and stock verification keep working without any config changes. Added `curl_cffi` as a dependency; `httpx` remains only as a transitive dependency of FastAPI's test client.
+- **Unwatch now respects color and size** — previously, clicking "Unwatch" removed *all* watched variants for a product regardless of colour/size. The unwatch endpoint now accepts `color` and `size` query parameters for targeted removal, and all notification channels generate per-variant unwatch URLs with the correct colour+size codes.
+
+### Refactoring
+
+- **Decomposed `SaleChecker` God class** (701 lines) into four focused modules:
+  - `services/filters.py` — product filtering pipeline with individually named, documented filter functions (`_is_excluded`, `_matches_gender`, `_matches_size`, `_meets_discount_threshold`). Adding a new filter is now a single function + one `and` clause.
+  - `services/stock.py` — real-time stock verification (`StockVerifier`), including the `pick_in_stock_variant` and `rebuild_from_l2` helpers.
+  - `services/state.py` — seen-variant persistence (`SeenVariantStore`) for new-deal detection.
+  - `services/enrichment.py` — watched/ignored metadata enrichment (moved from `main.py`).
+- **`SaleChecker`** is now a thin ~160-line orchestrator that delegates to the modules above.
+- **Replaced opaque 7-element tuple** in stock verification with a `StockVariant` dataclass (named fields: `color_display_code`, `size_display_code`, `color_name`, `quantity`, `status`, `color_code`, `size_code`).
+- **Added `SaleItem.variant_at(i)`** accessor for safe, named access to per-variant data — eliminates the repeated `qtys[i] if i < len(qtys) else 0` pattern across all notification channels.
+- **Added `parse_variant_codes(url)`** helper in `models/products.py` — consolidates URL parameter parsing (colour/size display code extraction) that was duplicated in `config.py`, `notifications/base.py`, and `sale_checker.py`.
+- **Added `VariantInfo` dataclass** for structured variant data returned by `SaleItem.variant_at()`.
+
+---
+
 ## v1.5.0 — 2026-04-24
 
 ### New features

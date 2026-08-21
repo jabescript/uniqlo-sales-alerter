@@ -1,0 +1,6 @@
+# Project-scoped Codex defaults for Uniqlo Sales Alerter.
+# Keep parallel review useful but bounded; subagents should be direct children.
+
+[agents]
+max_threads = 4
+max_depth = 1

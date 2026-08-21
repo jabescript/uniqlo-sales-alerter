@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from uniqlo_sales_alerter.config import AppConfig
-from uniqlo_sales_alerter.models.products import UniqloProduct
+from uniqlo_sales_alerter.models.products import ChangeReason, UniqloProduct
 from uniqlo_sales_alerter.services.sale_checker import SaleChecker
+from uniqlo_sales_alerter.services.state import SeenVariantStore
 
 from .conftest import make_raw_product, noop_verify, noop_watched_fetch, sample_deal
 
@@ -902,6 +903,195 @@ class TestAllThenNewMode:
             )
 
 
+class TestSuppressLowStockReAlert:
+    """Regression: suppressed low-stock variants must not re-alert forever.
+
+    With ``suppress_low_stock_alerts`` on, a low-stock variant is kept
+    out of the persisted seen-set so it can re-alert once it climbs back
+    above the threshold.  Change classification must honour the same
+    rule — otherwise the variant is never persisted yet is re-reported
+    as ``NEW`` on every single run.
+    """
+
+    @staticmethod
+    def _low_item():
+        return sample_deal(
+            product_id="E700-000",
+            available_sizes=["M"],
+            product_urls=[
+                "https://www.uniqlo.com/de/de/products/E700-000/00"
+                "?colorDisplayCode=09&sizeDisplayCode=004",
+            ],
+            color_names=["BLACK"],
+            stock_quantities=[1],
+            stock_statuses=["LOW_STOCK"],
+        )
+
+    def test_classify_skips_suppressed_low_stock_variant(self, tmp_path: Path):
+        """A suppressed low-stock variant yields no change reasons."""
+        store = SeenVariantStore(
+            tmp_path / "s.json",
+            suppress_low_stock=True,
+            low_stock_threshold=3,
+        )
+        item = self._low_item()
+        # Persistence already excludes the low-stock variant ...
+        assert store.current_variant_keys(item) == set()
+        # ... so classification must not report it as NEW.
+        changes, prev_disc = store.classify_item(item, set(), {})
+        assert changes == [[]]
+        assert prev_disc is None
+
+    @pytest.mark.asyncio
+    async def test_suppressed_low_stock_only_deal_never_fires(
+        self, sale_config: AppConfig, tmp_path: Path,
+    ):
+        """A low-stock-only deal stays silent across repeated checks."""
+        sale_config.notifications.notify_on = "new_deals"
+        sale_config.notifications.suppress_low_stock_alerts = True
+        sale_config.notifications.low_stock_threshold = 3
+        state_file = tmp_path / ".seen_variants.json"
+        checker = SaleChecker(sale_config, state_file=state_file)
+
+        async def fake_verify(_items):
+            return [self._low_item()]
+
+        with (
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[_product(_raw("E700-000"))],
+            ),
+            patch.object(
+                checker, "_verify_stock",
+                new_callable=AsyncMock, side_effect=fake_verify,
+            ),
+            noop_watched_fetch(checker),
+        ):
+            r1 = await checker.check()
+            r2 = await checker.check()
+            r3 = await checker.check()
+
+        assert r1.new_deals == [], "low-stock-only deal should be deferred, not fired"
+        assert r2.new_deals == []
+        assert r3.new_deals == []
+
+    @pytest.mark.asyncio
+    async def test_suppressed_mixed_deal_fires_once_for_in_stock_size(
+        self, sale_config: AppConfig, tmp_path: Path,
+    ):
+        """An in-stock size still fires once; the low-stock size is deferred."""
+        sale_config.notifications.notify_on = "new_deals"
+        sale_config.notifications.suppress_low_stock_alerts = True
+        sale_config.notifications.low_stock_threshold = 3
+        state_file = tmp_path / ".seen_variants.json"
+        checker = SaleChecker(sale_config, state_file=state_file)
+
+        def _mixed():
+            return sample_deal(
+                product_id="E701-000",
+                available_sizes=["M", "L"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E701-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=004",
+                    "https://www.uniqlo.com/de/de/products/E701-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=005",
+                ],
+                color_names=["BLACK", "BLACK"],
+                stock_quantities=[5, 1],
+                stock_statuses=["IN_STOCK", "LOW_STOCK"],
+            )
+
+        async def fake_verify(_items):
+            return [_mixed()]
+
+        with (
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[_product(_raw("E701-000"))],
+            ),
+            patch.object(
+                checker, "_verify_stock",
+                new_callable=AsyncMock, side_effect=fake_verify,
+            ),
+            noop_watched_fetch(checker),
+        ):
+            r1 = await checker.check()
+            r2 = await checker.check()
+
+        # In-stock M fires once; low-stock L is deferred (no change tag).
+        assert len(r1.new_deals) == 1
+        assert r1.new_deals[0].variant_changes[0] == [ChangeReason.NEW]
+        assert r1.new_deals[0].variant_changes[1] == []
+        # Second run: M already seen, L still deferred → nothing new.
+        assert r2.new_deals == []
+
+    @pytest.mark.asyncio
+    async def test_all_then_new_catchup_respects_suppress(
+        self, sale_config: AppConfig, tmp_path: Path,
+    ):
+        """The all_then_new catch-up batch must not leak suppressed deals.
+
+        On the first check after a restart/config-reload, ``all_then_new``
+        dispatches a full snapshot.  A low-stock-only deal must still be
+        held back when suppression is on — otherwise every reload would
+        re-send it, making the setting appear ignored.
+        """
+        sale_config.notifications.notify_on = "all_then_new"
+        sale_config.notifications.suppress_low_stock_alerts = True
+        sale_config.notifications.low_stock_threshold = 3
+        state_file = tmp_path / ".seen_variants.json"
+        checker = SaleChecker(sale_config, state_file=state_file)
+
+        def _in_stock():
+            return sample_deal(
+                product_id="E710-000",
+                available_sizes=["M"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E710-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+                color_names=["BLACK"],
+                stock_quantities=[5],
+                stock_statuses=["IN_STOCK"],
+            )
+
+        def _low_only():
+            return sample_deal(
+                product_id="E711-000",
+                available_sizes=["M"],
+                product_urls=[
+                    "https://www.uniqlo.com/de/de/products/E711-000/00"
+                    "?colorDisplayCode=09&sizeDisplayCode=004",
+                ],
+                color_names=["BLACK"],
+                stock_quantities=[1],
+                stock_statuses=["LOW_STOCK"],
+            )
+
+        async def fake_verify(_items):
+            return [_in_stock(), _low_only()]
+
+        with (
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock,
+                return_value=[_product(_raw("E710-000")), _product(_raw("E711-000"))],
+            ),
+            patch.object(
+                checker, "_verify_stock",
+                new_callable=AsyncMock, side_effect=fake_verify,
+            ),
+            noop_watched_fetch(checker),
+        ):
+            result = await checker.check()
+
+        pids = {item.product_id for item in result.new_deals}
+        assert pids == {"E710-000"}, (
+            "catch-up must include the in-stock deal but suppress the "
+            "low-stock-only deal"
+        )
+
+
 class TestWatchedProductFetch:
     """Tests for fetching watched products that aren't in the sale catalogue."""
 
@@ -1308,3 +1498,239 @@ class TestNewDealDedup:
         state = tmp_path / ".seen.json"
         _, new_keys = self._run_check(cfg, self._build_item(3), state)
         assert new_keys == []
+
+
+class TestChangeClassification:
+    """End-to-end coverage of per-variant change reasons.
+
+    Uses ``notify_on: "new_deals"`` so each ``SaleChecker`` instance
+    loads the prior state from disk and the diff path is exercised.
+    """
+
+    _URL_M = "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=004"
+    _URL_L = "https://x.com/products/E001/00?colorDisplayCode=09&sizeDisplayCode=005"
+    _URL_NAVY_M = "https://x.com/products/E001/00?colorDisplayCode=69&sizeDisplayCode=004"
+
+    @staticmethod
+    def _cfg(**overrides) -> AppConfig:
+        notif = {"notify_on": "new_deals"}
+        notif.update(overrides)
+        return AppConfig.model_validate({"notifications": notif})
+
+    @staticmethod
+    def _item(
+        *, discount: float = 40.0,
+        sizes: list[str] | None = None,
+        urls: list[str] | None = None,
+        qtys: list[int] | None = None,
+        statuses: list[str] | None = None,
+    ):
+        sizes = sizes or ["M"]
+        urls = urls or [TestChangeClassification._URL_M]
+        qtys = qtys or [10] * len(sizes)
+        statuses = statuses or ["IN_STOCK"] * len(sizes)
+        return sample_deal(
+            product_id="E001",
+            discount_percentage=discount,
+            sale_price=100 * (1 - discount / 100),
+            available_sizes=sizes,
+            product_urls=urls,
+            stock_quantities=qtys,
+            stock_statuses=statuses,
+        )
+
+    async def _run(self, cfg: AppConfig, item, state_file: Path):
+        checker = SaleChecker(cfg, state_file=state_file)
+        with (
+            patch.object(
+                checker, "_apply_filters", return_value=[item],
+            ),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            return await checker.check()
+
+    @pytest.mark.asyncio
+    async def test_first_run_tags_new(self, tmp_path: Path):
+        result = await self._run(
+            self._cfg(), self._item(discount=40), tmp_path / "s.json",
+        )
+        assert len(result.new_deals) == 1
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert result.new_deals[0].variant_changes == [[ChangeReason.NEW]]
+
+    @pytest.mark.asyncio
+    async def test_legacy_state_file_loads_without_false_new(
+        self, tmp_path: Path,
+    ):
+        """Old-format state file (just ``variants``) must not trigger NEW."""
+        state = tmp_path / "s.json"
+        state.write_text(
+            json.dumps({"variants": ["E001:09:004:40"]}) + "\n",
+            encoding="utf-8",
+        )
+        result = await self._run(self._cfg(), self._item(discount=40), state)
+        assert result.new_deals == []
+
+    @pytest.mark.asyncio
+    async def test_price_drop_tagged_and_notifies(self, tmp_path: Path):
+        state = tmp_path / "s.json"
+        await self._run(self._cfg(), self._item(discount=20), state)
+        result = await self._run(self._cfg(), self._item(discount=50), state)
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert len(result.new_deals) == 1
+        deal = result.new_deals[0]
+        assert ChangeReason.PRICE_DROP in deal.variant_changes[0]
+        assert deal.previous_discount == 20.0
+
+    @pytest.mark.asyncio
+    async def test_price_rise_tag_only_not_notified(self, tmp_path: Path):
+        """A bare PRICE_RISE must NOT add the item to new_deals."""
+        state = tmp_path / "s.json"
+        await self._run(self._cfg(), self._item(discount=50), state)
+        result = await self._run(self._cfg(), self._item(discount=30), state)
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        assert result.new_deals == []
+        # The matching item still exists and carries the tag.
+        deal = result.matching_deals[0]
+        assert ChangeReason.PRICE_RISE in deal.variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_restocked_after_disappear(self, tmp_path: Path):
+        """present -> absent (auto-OOS) -> present again -> RESTOCKED."""
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(
+            alert_reasons=["new", "new_variant", "restocked", "price_drop"],
+        )
+        await self._run(cfg, self._item(discount=40), state)
+        # Run with no matching items: variant disappears -> auto-OOS write.
+        checker = SaleChecker(cfg, state_file=state)
+        with (
+            patch.object(checker, "_apply_filters", return_value=[]),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            await checker.check()
+        # Reappears -> RESTOCKED.
+        result = await self._run(cfg, self._item(discount=40), state)
+        assert len(result.new_deals) == 1
+        assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_low_to_healthy_transition_is_restocked(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(
+            low_stock_threshold=5,
+            alert_reasons=["new", "new_variant", "restocked", "price_drop"],
+        )
+        await self._run(cfg, self._item(discount=40, qtys=[2]), state)
+        result = await self._run(cfg, self._item(discount=40, qtys=[20]), state)
+        assert ChangeReason.RESTOCKED in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_disabled_restock_reason_does_not_notify(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(alert_reasons=["new", "new_variant", "price_drop"])
+        await self._run(cfg, self._item(discount=40), state)
+        # Run with no matching items: variant disappears -> auto-OOS write.
+        checker = SaleChecker(cfg, state_file=state)
+        with (
+            patch.object(checker, "_apply_filters", return_value=[]),
+            patch.object(
+                checker._client, "fetch_sale_products",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            noop_verify(checker),
+            noop_watched_fetch(checker),
+        ):
+            await checker.check()
+
+        result = await self._run(cfg, self._item(discount=40), state)
+        assert result.new_deals == []
+        assert ChangeReason.RESTOCKED in result.matching_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_price_rise_can_notify_when_enabled(self, tmp_path: Path):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        cfg = self._cfg(alert_reasons=["price_rise"])
+        await self._run(cfg, self._item(discount=50), state)
+        result = await self._run(cfg, self._item(discount=30), state)
+        assert len(result.new_deals) == 1
+        assert ChangeReason.PRICE_RISE in result.new_deals[0].variant_changes[0]
+
+    @pytest.mark.asyncio
+    async def test_new_variant_tagged_only_on_added_variant(
+        self, tmp_path: Path,
+    ):
+        from uniqlo_sales_alerter.models.products import ChangeReason
+        state = tmp_path / "s.json"
+        await self._run(
+            self._cfg(),
+            self._item(discount=40, sizes=["M"], urls=[self._URL_M]),
+            state,
+        )
+        result = await self._run(
+            self._cfg(),
+            self._item(
+                discount=40,
+                sizes=["M", "L"],
+                urls=[self._URL_M, self._URL_L],
+                qtys=[10, 10],
+                statuses=["IN_STOCK", "IN_STOCK"],
+            ),
+            state,
+        )
+        assert len(result.new_deals) == 1
+        deal = result.new_deals[0]
+        assert deal.variant_changes[0] == []  # M was already seen
+        assert ChangeReason.NEW_VARIANT in deal.variant_changes[1]
+
+    @pytest.mark.asyncio
+    async def test_ttl_prunes_only_disappeared_variants(
+        self, tmp_path: Path,
+    ):
+        """A 31-day-old observed variant is kept; an oos one is dropped."""
+        from datetime import datetime, timedelta, timezone
+        state = tmp_path / "s.json"
+        old_ts = (
+            datetime.now(timezone.utc) - timedelta(days=31)
+        ).isoformat()
+        state.write_text(
+            json.dumps({
+                "variants": ["E001:09:004:40", "E999:01:001:30"],
+                "stock_buckets": {
+                    "E001:09:004": "in",   # observed, ancient — must be kept
+                    "E999:01:001": "oos",  # disappeared, ancient — must drop
+                },
+                "last_seen": {
+                    "E001:09:004": old_ts,
+                    "E999:01:001": old_ts,
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        cfg = self._cfg(state_retention_days=30)
+        await self._run(cfg, self._item(discount=40), state)
+        data = json.loads(state.read_text(encoding="utf-8"))
+        assert "E001:09:004" in data["stock_buckets"], (
+            "observed variants must NOT be pruned regardless of age"
+        )
+        assert "E999:01:001" not in data["stock_buckets"], (
+            "oos variants older than the TTL must be pruned"
+        )
+        assert "E999:01:001:30" not in data["variants"]
+
+
+
