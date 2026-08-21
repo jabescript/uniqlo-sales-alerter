@@ -20,8 +20,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
-import httpx
 import pytest
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 
 from uniqlo_sales_alerter.clients.uniqlo import UniqloClient
 from uniqlo_sales_alerter.config import AppConfig
@@ -41,7 +42,9 @@ def _api_reachable(country_code: str = "de", lang: str = "de") -> bool:
 
     Tests the same endpoint + params the SaleChecker will use so we don't
     get false positives from a connectivity check that works but rate-limited
-    sale queries.
+    sale queries. Uses ``curl_cffi`` (no browser impersonation), matching
+    :class:`UniqloClient` — Uniqlo's Akamai Bot Manager 403s ``httpx``'s TLS
+    fingerprint outright.
     """
     url = f"https://www.uniqlo.com/{country_code}/api/commerce/v5/{lang}/products"
     headers = {
@@ -49,15 +52,13 @@ def _api_reachable(country_code: str = "de", lang: str = "de") -> bool:
         "Accept": "application/json",
         "x-fr-clientid": f"uq.{country_code}.web-spa",
     }
+    params = {"limit": 1, "httpFailure": "true", "flagCodes": "discount"}
     try:
-        resp = httpx.get(
-            url,
-            params={"limit": 1, "httpFailure": "true", "flagCodes": "discount"},
-            headers=headers,
-            timeout=_E2E_TIMEOUT,
+        resp = curl_requests.get(
+            url, params=params, headers=headers, timeout=_E2E_TIMEOUT,
         )
         return resp.status_code == 200
-    except (httpx.RequestError, httpx.HTTPStatusError):
+    except CurlRequestException:
         return False
 
 
@@ -351,7 +352,12 @@ class TestProductUrlsResolvable:
         )
 
     async def test_product_pages_return_200(self, live_deals: list[SaleItem]):
-        """Spot-check that product page URLs return HTTP 200."""
+        """Spot-check that product page URLs return HTTP 200.
+
+        Uses ``curl_cffi`` (no browser impersonation): Uniqlo's Akamai Bot
+        Manager also blocks plain ``httpx``'s TLS fingerprint on product
+        pages, not just the API.
+        """
         urls_to_check = [
             deal.product_urls[0]
             for deal in live_deals[:3]
@@ -359,15 +365,14 @@ class TestProductUrlsResolvable:
         ]
         assert urls_to_check, "No product URLs available for verification"
 
-        async with httpx.AsyncClient(
-            timeout=_E2E_TIMEOUT,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            },
-        ) as client:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        async with curl_requests.AsyncSession(
+            timeout=_E2E_TIMEOUT, headers=headers,
+        ) as curl_client:
             for url in urls_to_check:
-                resp = await client.get(url)
+                resp = await curl_client.get(url, allow_redirects=True)
                 assert resp.status_code == 200, (
                     f"Product page returned {resp.status_code}: {url}"
                 )

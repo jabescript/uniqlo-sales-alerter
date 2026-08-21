@@ -8,7 +8,9 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
+from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 
 from uniqlo_sales_alerter.models.products import UniqloApiResponse, UniqloProduct
 
@@ -36,7 +38,7 @@ def _backoff_seconds(attempt: int, *, jitter: bool = True) -> float:
     return min(base, _MAX_RATE_LIMIT_WAIT)
 
 
-def _retry_after(response: httpx.Response) -> float | None:
+def _retry_after(response: curl_requests.Response) -> float | None:
     """Parse the ``Retry-After`` header (seconds or HTTP-date) into seconds."""
     value = response.headers.get("retry-after")
     if value is None:
@@ -100,8 +102,15 @@ def _normalize_v3_product(raw: dict[str, Any]) -> dict[str, Any]:
 class UniqloClient:
     """Fetches product data from the Uniqlo Commerce API.
 
-    Uses a single shared :class:`httpx.AsyncClient` so that TCP connections
-    are pooled and reused across listing, L2, and stock requests.
+    Uses a single shared :class:`curl_cffi.requests.AsyncSession` so that
+    TCP connections are pooled and reused across listing, L2, and stock
+    requests.
+
+    Deliberately uses ``curl_cffi`` instead of ``httpx``: Uniqlo's Akamai Bot
+    Manager fingerprints the TLS/JA3 handshake and 403s ``httpx`` requests
+    outright, regardless of headers. Plain libcurl's default TLS fingerprint
+    (matching the system ``curl`` binary, and *not* browser-impersonated)
+    passes reliably.
 
     All requests go through :meth:`_request` which handles retries for
     transient errors (5xx) and rate limits (429) with ``Retry-After``
@@ -117,24 +126,21 @@ class UniqloClient:
             "Accept": "application/json",
             "x-fr-clientid": config.client_id,
         }
-        self._client: httpx.AsyncClient | None = None
+        self._client: curl_requests.AsyncSession | None = None
 
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
+    async def _ensure_client(self) -> curl_requests.AsyncSession:
+        if self._client is None:
+            self._client = curl_requests.AsyncSession(
                 headers=self._headers,
                 timeout=TIMEOUT_SECONDS,
-                limits=httpx.Limits(
-                    max_connections=MAX_CONNECTIONS,
-                    max_keepalive_connections=MAX_CONNECTIONS,
-                ),
+                max_clients=MAX_CONNECTIONS,
             )
         return self._client
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client (call at shutdown)."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        if self._client is not None:
+            await self._client.close()
             self._client = None
 
     # ------------------------------------------------------------------
@@ -147,7 +153,7 @@ class UniqloClient:
         *,
         params: dict[str, Any] | None = None,
         label: str = "",
-    ) -> httpx.Response:
+    ) -> curl_requests.Response:
         """GET *url* with automatic retry on 429 / 5xx.
 
         Respects the ``Retry-After`` header when present; otherwise falls
@@ -191,13 +197,15 @@ class UniqloClient:
                         wait,
                     )
 
-                last_exc = httpx.HTTPStatusError(
-                    f"{resp.status_code}",
-                    request=resp.request,
-                    response=resp,
+                last_exc = CurlHTTPError(
+                    f"HTTP Error {resp.status_code}", 0, resp,
                 )
 
-            except httpx.RequestError as exc:
+            except CurlHTTPError:
+                # Non-retryable status (e.g. 404) — propagate immediately
+                # rather than treating it as a transient connection error.
+                raise
+            except CurlRequestException as exc:
                 wait = _backoff_seconds(attempt)
                 logger.warning(
                     "Request error on %s — attempt %d/%d, "
@@ -210,7 +218,8 @@ class UniqloClient:
                 await asyncio.sleep(wait)
 
         if (
-            isinstance(last_exc, httpx.HTTPStatusError)
+            isinstance(last_exc, CurlHTTPError)
+            and last_exc.response is not None
             and last_exc.response.status_code == 429
         ):
             print(

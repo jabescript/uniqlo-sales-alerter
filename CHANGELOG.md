@@ -4,7 +4,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ---
 
-## v1.6.0 — 2026-06-22
+## v1.6.0 — 2026-08-21
 
 ### New features
 
@@ -15,6 +15,7 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 
 ### Fixed
 
+- **403 Forbidden from the Uniqlo API** — Uniqlo's Akamai Bot Manager began fingerprinting the TLS/JA3 handshake of `httpx` requests and blocking them outright, regardless of headers or user agent. `UniqloClient` now uses `curl_cffi` (plain libcurl TLS, no browser impersonation) exclusively for all Uniqlo API requests, replacing `httpx`, so sale checks and stock verification keep working without any config changes. Added `curl_cffi` as a dependency; `httpx` remains only as a transitive dependency of FastAPI's test client.
 - **Unwatch now respects color and size** — previously, clicking "Unwatch" removed *all* watched variants for a product regardless of colour/size. The unwatch endpoint now accepts `color` and `size` query parameters for targeted removal, and all notification channels generate per-variant unwatch URLs with the correct colour+size codes.
 
 ### Refactoring
