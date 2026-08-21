@@ -29,7 +29,7 @@ gu:
   # GU (gu-global.com) is Uniqlo's sister brand. Disabled by default.
   # Confirmed working countries: "jp/ja" and "us/en" only.
   # European and SEA countries return 503 from the GU API.
-  enabled: false
+  enabled: true
   country: "jp/ja"
   check_interval_minutes: 60
   scheduled_checks: []
@@ -48,7 +48,6 @@ filters:
   # Which genders to include.  Valid: men, women, unisex, kids, baby
   gender:
   - MEN
-  - WOMEN
   - UNISEX
 
   # Minimum discount to surface a deal (ignored for limited countries).
@@ -77,46 +76,12 @@ filters:
   # even when not on sale.  Paste a Uniqlo product URL — metadata is
   # resolved from the API on startup.
   watched_variants:
-  - url: 
-      https://www.uniqlo.com/de/de/products/E483045-000/00?colorDisplayCode=70&sizeDisplayCode=003
-    id: E483045-000
-    price_group: '00'
-    name: Satin Rock (lang)
-    color: '70'
-    color_name: HELLES LILA
-    size: '003'
-    size_name: S
-  - url: 
-      https://www.uniqlo.com/de/de/products/E483049-000/00?colorDisplayCode=39&sizeDisplayCode=004
-    id: E483049-000
-    price_group: '00'
-    name: Satin Bluse (oversized, kurz, Halbarm)
-    color: '39'
-    color_name: DUNKELBRAUN
-    size: '004'
-    size_name: M
-  - url: 
-      https://www.uniqlo.com/de/de/products/E478730-000/00?colorDisplayCode=61&sizeDisplayCode=004
-    id: E478730-000
-    price_group: '00'
-    name: Soufflé Yarn Strickkleid
-    color: '61'
-    color_name: BLAU
-    size: '004'
-    size_name: M
+  
 
   # Ignored products: hidden from all results regardless of sale/size.
   # Watched variants take precedence over ignored products.
   ignored_products:
-  - id: E481518-000
-    url: https://www.uniqlo.com/de/de/products/E481518-000/00
-    name: Bundfaltenhose (Wide Fit, Jersey Velours, lang)
-  - id: E485255-000
-    url: https://www.uniqlo.com/de/de/products/E485255-000/00
-    name: ZOOTROPOLIS UT T-Shirt
-  - id: E484088-000
-    url: https://www.uniqlo.com/de/de/products/E484088-000/00
-    name: AIRism Body (Langarm)
+  
 
   # Ignored keywords: products whose name contains any of these words
   # (case-insensitive) are hidden from all results.
@@ -126,7 +91,7 @@ filters:
 # Enables Ignore / Watch / Unwatch action buttons in notifications.
 # Set to the address other devices can reach, e.g. "http://192.168.1.50".
 # The port is appended automatically.  Leave empty to hide buttons.
-server_url: "http://localhost"
+server_url: ""
 port: 8000
 
 # ── Notifications ──────────────────────────────────────────────
