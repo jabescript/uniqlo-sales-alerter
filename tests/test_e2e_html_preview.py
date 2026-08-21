@@ -383,7 +383,6 @@ class TestProductUrlsResolvable:
 # ---------------------------------------------------------------------------
 
 _SEA_COUNTRIES = [
-    pytest.param("ph/en", id="philippines"),
     pytest.param("th/en", id="thailand"),
 ]
 
@@ -391,8 +390,8 @@ _SEA_COUNTRIES = [
 class TestSeaCountryPipeline:
     """Verify the full pipeline works for countries with unreliable stock APIs.
 
-    PH and TH use v3 listing endpoints and have ``stock_api="none"`` in the
-    capabilities registry.  Each country's pipeline runs at most once — the
+    TH uses v3 listing endpoints and has ``stock_api="none"`` in the
+    capabilities registry.  The pipeline runs at most once — the
     result is cached and shared across all tests in this class.
     """
 
@@ -454,9 +453,9 @@ class TestSeaCountryPipeline:
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
     async def test_sea_urls_use_code_style(self, country: str):
-        """SEA countries must use colorCode/sizeCode URL format."""
+        """SEA countries must use their configured URL format."""
         data = await _get_country_data(country)
-        assert data.config.capabilities.url_style == "code"
+        style = data.config.capabilities.url_style
 
         if not data.matching_deals:
             pytest.skip(f"No deals for {country}")
@@ -466,27 +465,41 @@ class TestSeaCountryPipeline:
                 if not url:
                     continue
                 qs = parse_qs(urlparse(url).query)
-                assert "colorCode" in qs, (
-                    f"SEA URL must use colorCode, got: {url}"
-                )
-                assert "sizeCode" in qs, (
-                    f"SEA URL must use sizeCode, got: {url}"
-                )
-                assert "colorDisplayCode" not in qs, (
-                    f"SEA URL must NOT use colorDisplayCode: {url}"
-                )
-                path = urlparse(url).path
-                parts = path.rstrip("/").split("/")
-                product_idx = next(
-                    (i for i, p in enumerate(parts) if p == "products"),
-                    -1,
-                )
-                assert product_idx >= 0
-                after_pid = product_idx + 2
-                assert after_pid >= len(parts), (
-                    f"code-style URL must not have /{parts[after_pid]} "
-                    f"price-group segment: {url}"
-                )
+                if style == "code":
+                    assert "colorCode" in qs, (
+                        f"SEA URL must use colorCode, got: {url}"
+                    )
+                    assert "sizeCode" in qs, (
+                        f"SEA URL must use sizeCode, got: {url}"
+                    )
+                    assert "colorDisplayCode" not in qs, (
+                        f"SEA URL must NOT use colorDisplayCode: {url}"
+                    )
+                    path = urlparse(url).path
+                    parts = path.rstrip("/").split("/")
+                    product_idx = next(
+                        (i for i, p in enumerate(parts) if p == "products"),
+                        -1,
+                    )
+                    assert product_idx >= 0
+                    after_pid = product_idx + 2
+                    assert after_pid >= len(parts), (
+                        f"code-style URL must not have /{parts[after_pid]} "
+                        f"price-group segment: {url}"
+                    )
+                else:
+                    assert "colorDisplayCode" in qs, (
+                        f"URL must use colorDisplayCode, got: {url}"
+                    )
+                    assert "sizeDisplayCode" in qs, (
+                        f"URL must use sizeDisplayCode, got: {url}"
+                    )
+                    assert "colorCode" not in qs, (
+                        f"URL must NOT use colorCode: {url}"
+                    )
+                    assert f"/{deal.price_group}?" in url or f"/{deal.price_group}" in url, (
+                        f"display_code URL must have /{deal.price_group} price-group segment: {url}"
+                    )
 
     @pytest.mark.parametrize("country", _SEA_COUNTRIES)
     async def test_sea_products_resolvable(self, country: str):
@@ -531,7 +544,6 @@ class TestSeaCountryPipeline:
 _REPRESENTATIVE_STYLES: dict[str, str] = {
     "de/de": "v5_disc",
     "id/en": "v5_disc+v5_ltd",
-    "ph/en": "v3_disc+v3_ltd",
     "th/en": "v5_ltd+v3",
     "sg/en": "v5_disc+sale_paths",
 }

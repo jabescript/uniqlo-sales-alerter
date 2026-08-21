@@ -193,5 +193,29 @@ class TelegramNotifier:
                         parse_mode="MarkdownV2",
                         reply_markup=markup,
                     )
-            except TelegramError:
+            except TelegramError as exc:
+                if markup:
+                    logger.warning(
+                        "Failed to send Telegram message with action buttons for %s (%s); "
+                        "retrying without buttons.",
+                        deal.product_id,
+                        exc,
+                    )
+                    try:
+                        if photo_url:
+                            await bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo_url,
+                                caption=caption,
+                                parse_mode="MarkdownV2",
+                            )
+                        else:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=caption,
+                                parse_mode="MarkdownV2",
+                            )
+                        continue
+                    except TelegramError:
+                        pass
                 logger.exception("Failed to send Telegram message for %s", deal.product_id)

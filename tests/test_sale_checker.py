@@ -494,7 +494,7 @@ class TestStockVerification:
     async def test_verify_stock_enriches_urls_for_unreliable_stock_api(self):
         """Countries with stock_api='none' fetch L2 for URLs but skip stock."""
         config = AppConfig.model_validate({
-            "uniqlo": {"country": "ph/en"},
+            "uniqlo": {"country": "th/en"},
             "filters": {"gender": ["men"], "min_sale_percentage": 40},
         })
         assert config.capabilities.stock_api == "none"

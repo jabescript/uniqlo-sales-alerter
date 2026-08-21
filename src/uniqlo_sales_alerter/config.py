@@ -474,11 +474,8 @@ _COUNTRY_CAPABILITIES: dict[str, CountryCapabilities] = {
     "id": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
     "vn": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
     "my": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
-    # SEA v3 stores — stock API unreliable, storefront uses code-style URLs
-    "ph": CountryCapabilities(
-        listing_sources=("v3_disc", "v3_ltd"), stock_api="none",
-        url_style="code",
-    ),
+    "ph": CountryCapabilities(listing_sources=("v5_disc", "v5_ltd")),
+    # SEA stores — stock API unreliable, storefront uses code-style URLs
     "th": CountryCapabilities(
         listing_sources=("v5_ltd", "v3_disc", "v3_ltd"), stock_api="none",
         url_style="code",

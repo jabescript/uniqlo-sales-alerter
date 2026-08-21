@@ -182,12 +182,13 @@ def to_sale_item(
         base = config.product_page_base
         pid = product.product_id
         pg = product.price_group
+        style = config.capabilities.url_style
         code_to_name = {size.display_code: size.name for size in product.sizes}
         for wv in watched_variants:
             size_name = code_to_name.get(wv.size)
             if size_name is None:
                 continue
-            wv_url = build_product_url(base, pid, pg, wv.color, wv.size)
+            wv_url = build_product_url(base, pid, pg, wv.color, wv.size, url_style=style)
             if size_name in final_sizes:
                 idx = final_sizes.index(size_name)
                 final_urls[idx] = wv_url

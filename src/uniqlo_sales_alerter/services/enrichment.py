@@ -74,6 +74,7 @@ async def enrich_config(config: AppConfig, client: UniqloClient) -> bool:
         l2_by_product[pid.upper()] = await client.fetch_product_l2s(pid, pg)
 
     changed = False
+    url_style = config.capabilities.url_style
 
     for ignored in incomplete_ignored:
         product = product_by_id.get(ignored.id.upper())
@@ -82,7 +83,7 @@ async def enrich_config(config: AppConfig, client: UniqloClient) -> bool:
             changed = True
         if not ignored.url:
             pg = product.price_group if product else "00"
-            ignored.url = build_product_url(base, ignored.id, pg)
+            ignored.url = build_product_url(base, ignored.id, pg, url_style=url_style)
             changed = True
 
     for wv in incomplete_variants:
@@ -94,7 +95,7 @@ async def enrich_config(config: AppConfig, client: UniqloClient) -> bool:
 
         if not wv.url:
             wv.url = build_product_url(
-                base, wv.id, wv.price_group, wv.color, wv.size,
+                base, wv.id, wv.price_group, wv.color, wv.size, url_style=url_style,
             )
             changed = True
 
