@@ -19,6 +19,10 @@ from uniqlo_sales_alerter.config import (
 class TestAppConfig:
     def test_defaults(self):
         cfg = AppConfig()
+        assert cfg.uniqlo.enabled is True
+        assert cfg.gu.enabled is False
+        assert cfg.gu.country == "jp/ja"
+        assert cfg.gu.check_interval_minutes == 60
         assert cfg.country_code == "de"
         assert cfg.lang_code == "de"
         assert cfg.base_url == "https://www.uniqlo.com/de/api/commerce/v5/de/products"
@@ -273,6 +277,21 @@ class TestConfigFromEnv:
             "price_rise",
         ]
 
+    def test_uniqlo_and_gu_vars(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("UNIQLO_ENABLED", "false")
+        monkeypatch.setenv("GU_ENABLED", "true")
+        monkeypatch.setenv("GU_COUNTRY", "us/en")
+        monkeypatch.setenv("GU_CHECK_INTERVAL", "45")
+        monkeypatch.setenv("GU_SCHEDULED_CHECKS", "08:00, 20:00")
+        monkeypatch.setenv("GU_SALE_PATHS", "123, 456")
+        result = _config_from_env()
+        assert result["uniqlo"]["enabled"] is False
+        assert result["gu"]["enabled"] is True
+        assert result["gu"]["country"] == "us/en"
+        assert result["gu"]["check_interval_minutes"] == 45
+        assert result["gu"]["scheduled_checks"] == ["08:00", "20:00"]
+        assert result["gu"]["sale_paths"] == ["123", "456"]
+
 
 class TestLoadConfigEnvVars:
     """Integration tests for load_config with env-var-only and hybrid modes."""
@@ -305,14 +324,18 @@ class TestLoadConfigEnvVars:
             uniqlo:
               country: "de/de"
               check_interval_minutes: 60
+            gu:
+              enabled: false
         """)
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml_content)
         monkeypatch.setenv("TELEGRAM_ENABLED", "true")
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+        monkeypatch.setenv("GU_ENABLED", "true")
         cfg = load_config(config_file)
         assert cfg.country_code == "de"
         assert cfg.uniqlo.check_interval_minutes == 60
+        assert cfg.gu.enabled is True
         assert cfg.notifications.channels.telegram.enabled is True
         assert cfg.notifications.channels.telegram.bot_token == "tok"

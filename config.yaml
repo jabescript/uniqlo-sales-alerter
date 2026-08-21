@@ -1,5 +1,7 @@
 # ── General ────────────────────────────────────────────────────
 uniqlo:
+  enabled: true
+
   # Country/language for the Uniqlo API.
   # Full support:    "de/de", "uk/en", "fr/fr", "es/es", "it/it",
   #                  "be/fr", "be/nl", "nl/nl", "dk/en", "se/en",
@@ -21,6 +23,16 @@ uniqlo:
   # Sale category path IDs (required for Singapore, optional elsewhere).
   # Find yours in the sale-page URL: .../feature/sale/men?path=5856
   # Singapore paths (as of 2026): ["5855", "5856", "5857", "5858"]
+  sale_paths: []
+
+gu:
+  # GU (gu-global.com) is Uniqlo's sister brand. Disabled by default.
+  # Confirmed working countries: "jp/ja" and "us/en" only.
+  # European and SEA countries return 503 from the GU API.
+  enabled: false
+  country: "jp/ja"
+  check_interval_minutes: 60
+  scheduled_checks: []
   sale_paths: []
 
 # ── Scheduling ─────────────────────────────────────────────────
@@ -83,6 +95,15 @@ filters:
     color_name: DUNKELBRAUN
     size: '004'
     size_name: M
+  - url: 
+      https://www.uniqlo.com/de/de/products/E478730-000/00?colorDisplayCode=61&sizeDisplayCode=004
+    id: E478730-000
+    price_group: '00'
+    name: Soufflé Yarn Strickkleid
+    color: '61'
+    color_name: BLAU
+    size: '004'
+    size_name: M
 
   # Ignored products: hidden from all results regardless of sale/size.
   # Watched variants take precedence over ignored products.
@@ -93,6 +114,9 @@ filters:
   - id: E485255-000
     url: https://www.uniqlo.com/de/de/products/E485255-000/00
     name: ZOOTROPOLIS UT T-Shirt
+  - id: E484088-000
+    url: https://www.uniqlo.com/de/de/products/E484088-000/00
+    name: AIRism Body (Langarm)
 
   # Ignored keywords: products whose name contains any of these words
   # (case-insensitive) are hidden from all results.
@@ -118,7 +142,7 @@ notifications:
 
   # Preview modes — local previews alongside real channels.
   # Also available via CLI: --preview-cli / --preview-html
-  preview_cli: false
+  preview_cli: true
   preview_html: true
 
   # ── Notification Triggers ───────────────────────────────────

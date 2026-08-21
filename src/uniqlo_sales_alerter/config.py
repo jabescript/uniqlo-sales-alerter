@@ -53,10 +53,18 @@ def _resolve_env_vars(value: object) -> object:
 _ENV_MAP: list[tuple[str, list[str], str]] = [
     # (ENV_VAR_NAME, config_path_segments, type)
     # -- uniqlo --
+    ("UNIQLO_ENABLED",              ["uniqlo", "enabled"],                       "bool"),
     ("UNIQLO_COUNTRY",              ["uniqlo", "country"],                       "str"),
     ("UNIQLO_CHECK_INTERVAL",       ["uniqlo", "check_interval_minutes"],        "int"),
     ("SCHEDULED_CHECKS",            ["uniqlo", "scheduled_checks"],              "list"),
+    ("UNIQLO_SCHEDULED_CHECKS",      ["uniqlo", "scheduled_checks"],              "list"),
     ("UNIQLO_SALE_PATHS",           ["uniqlo", "sale_paths"],                    "list"),
+    # -- gu --
+    ("GU_ENABLED",                  ["gu", "enabled"],                           "bool"),
+    ("GU_COUNTRY",                  ["gu", "country"],                           "str"),
+    ("GU_CHECK_INTERVAL",           ["gu", "check_interval_minutes"],            "int"),
+    ("GU_SCHEDULED_CHECKS",         ["gu", "scheduled_checks"],                  "list"),
+    ("GU_SALE_PATHS",               ["gu", "sale_paths"],                        "list"),
     # -- filters --
     ("FILTER_GENDER",               ["filters", "gender"],                       "list"),
     ("FILTER_MIN_SALE_PERCENTAGE",  ["filters", "min_sale_percentage"],          "float"),
@@ -153,6 +161,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 class UniqloConfig(BaseModel):
     """Uniqlo API connection and scheduling settings."""
 
+    enabled: bool = True
     country: str = "de/de"
     check_interval_minutes: int = Field(default=30, ge=0)
     scheduled_checks: list[str] = Field(default_factory=list)
@@ -191,6 +200,14 @@ class UniqloConfig(BaseModel):
                 ) from None
             cleaned.append(entry)
         return cleaned
+
+
+class GuConfig(UniqloConfig):
+    """GU API connection and scheduling settings."""
+
+    enabled: bool = False
+    country: str = "jp/ja"
+    check_interval_minutes: int = Field(default=60, ge=0)
 
 
 class SizeFilters(BaseModel):
@@ -289,6 +306,7 @@ class FilterConfig(BaseModel):
     ignored_products: list[IgnoredProduct] = Field(default_factory=list)
     ignored_keywords: list[str] = Field(default_factory=list)
     watched_urls: list[str] = Field(default_factory=list, exclude=True)
+    watched_products: list[WatchedVariant] = Field(default_factory=list, exclude=True)
 
     @field_validator("ignored_products", mode="before")
     @classmethod
@@ -308,17 +326,19 @@ class FilterConfig(BaseModel):
 
     @model_validator(mode="after")
     def _migrate_watched_urls(self) -> "FilterConfig":
-        """Auto-migrate legacy ``watched_urls`` to ``watched_variants``."""
-        if not self.watched_urls:
-            return self
-        for url in self.watched_urls:
-            fields = parse_uniqlo_url(url)
-            if not fields["id"]:
-                continue
-            self.watched_variants.append(WatchedVariant(
-                url=url, **fields,
-            ))
-        self.watched_urls = []
+        """Auto-migrate legacy ``watched_urls`` and ``watched_products`` to ``watched_variants``."""
+        if self.watched_urls:
+            for url in self.watched_urls:
+                fields = parse_uniqlo_url(url)
+                if not fields["id"]:
+                    continue
+                self.watched_variants.append(WatchedVariant(
+                    url=url, **fields,
+                ))
+            self.watched_urls = []
+        if self.watched_products:
+            self.watched_variants.extend(self.watched_products)
+            self.watched_products = []
         return self
 
 
@@ -484,6 +504,7 @@ _DEFAULT_CAPABILITIES = CountryCapabilities()
 
 class AppConfig(BaseModel):
     uniqlo: UniqloConfig = Field(default_factory=UniqloConfig)
+    gu: GuConfig = Field(default_factory=GuConfig)
     filters: FilterConfig = Field(default_factory=FilterConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     quiet_hours: QuietHoursConfig = Field(default_factory=QuietHoursConfig)
