@@ -75,12 +75,12 @@ filters:
   # Watched variants: specific colour+size combos to always monitor,
   # even when not on sale.  Paste a Uniqlo product URL — metadata is
   # resolved from the API on startup.
-  watched_variants:
+  watched_variants: []
   
 
   # Ignored products: hidden from all results regardless of sale/size.
   # Watched variants take precedence over ignored products.
-  ignored_products:
+  ignored_products: []
   
 
   # Ignored keywords: products whose name contains any of these words
