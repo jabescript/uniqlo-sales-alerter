@@ -142,7 +142,7 @@ notifications:
 
   channels:
     telegram:
-      enabled: false
+      enabled: true
       bot_token: ""
       chat_id: ""
 
