@@ -7,10 +7,8 @@ from typing import TYPE_CHECKING
 
 from uniqlo_sales_alerter.models.products import SaleItem
 from uniqlo_sales_alerter.notifications.base import (
-    PROJECT_URL,
     DealActions,
     format_price,
-    format_rating,
     format_stock_suffix,
     resolve_color_image,
     variant_change_text,
@@ -68,9 +66,6 @@ def _build_caption(
     else:
         price_line = _escape_md(price.sale_text)
 
-    rating_text = format_rating(deal)
-    rating_line = _escape_md(rating_text) if rating_text else ""
-
     size_links = " \\| ".join(
         _size_link(
             size_label, url,
@@ -85,21 +80,21 @@ def _build_caption(
         )
     )
 
-    footer = f"[Uniqlo Sales Alerter]({PROJECT_URL})"
+    footer_parts = []
     if server_url:
-        footer += f" · [Settings]({server_url}/settings)"
+        footer_parts.append(f"[Settings]({server_url}/settings)")
     if ignored_keywords:
         keywords_text = _escape_md(", ".join(ignored_keywords))
-        footer += f"\nIgnored keywords: {keywords_text}"
+        footer_parts.append(f"Ignored keywords: {keywords_text}")
+    footer = "\n".join(footer_parts)
 
     lines = [
         f"*{name}*",
         price_line,
         size_links or _escape_md(", ".join(deal.available_sizes)),
-        f"\n{footer}",
     ]
-    if rating_line:
-        lines.insert(2, rating_line)
+    if footer:
+        lines.append(f"\n{footer}")
     if deal.is_watched:
         lines.insert(0, "⭐ *Watched item*")
     return "\n".join(lines)

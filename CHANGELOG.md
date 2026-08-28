@@ -16,6 +16,8 @@ All notable changes to the [Uniqlo Sales Alerter](https://github.com/kequach/uni
 ### Changed
 
 - **Telegram color inline with size** — Telegram captions now show each variant's color inside its size link (e.g. `[SCHWARZ · S](url)`) instead of a separate `Color:` line.
+- **Telegram footer tag removed** — the `Uniqlo Sales Alerter` attribution link no longer appears in Telegram captions. The Settings link (when `server_url` is set) and ignored-keywords footer are unchanged.
+- **Telegram star rating removed** — Telegram captions no longer show the `★ 4.3 (127 reviews)` rating line.
 
 ### Fixed
 

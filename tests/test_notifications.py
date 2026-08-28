@@ -833,28 +833,31 @@ class TestStockCountDisplay:
 
 
 class TestRatingDisplay:
-    """All four channels must render the product rating when available."""
+    """Console, email, and HTML report render the rating; Telegram omits it."""
 
-    def _render_all(self, deal):
+    def _render_rating_channels(self, deal):
         return {
             "console": _format_deal(deal, 1),
-            "telegram": _build_caption(deal),
             "email": _build_html([deal]),
             "html_report": _build_report([deal], _REPORT_TS),
         }
 
     def test_rating_rendered_when_present(self):
         deal = _sample_deal(rating_average=4.3, rating_count=127)
-        # Telegram escapes the dot in "4.3" to "4\.3" (MarkdownV2), so strip
-        # backslashes before checking the average.
-        for name, out in self._render_all(deal).items():
+        for name, out in self._render_rating_channels(deal).items():
             assert "4.3" in out.replace("\\", ""), f"{name} missing rating average"
             assert "127" in out, f"{name} missing rating count"
 
     def test_rating_hidden_when_count_zero(self):
         deal = _sample_deal(rating_average=None, rating_count=0)
-        for name, out in self._render_all(deal).items():
+        for name, out in self._render_rating_channels(deal).items():
             assert "★" not in out, f"{name} showed star with no rating"
+
+    def test_telegram_omits_rating(self):
+        deal = _sample_deal(rating_average=4.3, rating_count=127)
+        caption = _build_caption(deal)
+        assert "★" not in caption
+        assert "review" not in caption
 
     def test_single_review_pluralisation(self):
         deal = _sample_deal(rating_average=5.0, rating_count=1)
