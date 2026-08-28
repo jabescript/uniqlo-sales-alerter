@@ -13,7 +13,6 @@ from uniqlo_sales_alerter.notifications.base import (
     format_rating,
     format_stock_suffix,
     resolve_color_image,
-    unique_colors,
     variant_change_text,
 )
 
@@ -33,10 +32,14 @@ def _escape_md(text: str) -> str:
 def _size_link(
     size_label: str, url: str, qty: int, status: str, threshold: int,
     change_tag: str = "",
+    color_name: str = "",
 ) -> str:
-    """Render a single size as a MarkdownV2 link with optional stock suffix."""
+    """Render a single size as a MarkdownV2 link with optional color and stock suffix."""
     stock_text, is_low = format_stock_suffix(qty, status, threshold)
-    parts = [size_label]
+    parts = []
+    if color_name:
+        parts.append(color_name)
+    parts.append(size_label)
     if stock_text:
         parts.append(stock_text + (" ⚠" if is_low else ""))
     if change_tag:
@@ -65,12 +68,6 @@ def _build_caption(
     else:
         price_line = _escape_md(price.sale_text)
 
-    colors = unique_colors(deal)
-    color_line = (
-        f"Color: {_escape_md(' · '.join(colors))}"
-        if colors else ""
-    )
-
     rating_text = format_rating(deal)
     rating_line = _escape_md(rating_text) if rating_text else ""
 
@@ -81,6 +78,7 @@ def _build_caption(
             deal.variant_at(i).status,
             low_stock_threshold,
             variant_change_text(deal, i),
+            color_name=deal.variant_at(i).color_name,
         )
         for i, (size_label, url) in enumerate(
             zip(deal.available_sizes, deal.product_urls),
@@ -102,8 +100,6 @@ def _build_caption(
     ]
     if rating_line:
         lines.insert(2, rating_line)
-    if color_line:
-        lines.insert(1, color_line)
     if deal.is_watched:
         lines.insert(0, "⭐ *Watched item*")
     return "\n".join(lines)

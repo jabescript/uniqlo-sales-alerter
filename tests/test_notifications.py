@@ -126,14 +126,30 @@ class TestTelegramCaption:
         assert "Test T\\-Shirt" in caption
         assert "19\\.90" in caption
         assert "39\\.90" in caption
-        assert "[S](" in caption
-        assert "[M](" in caption
-        assert "[L](" in caption
+        assert "[SCHWARZ · S](" in caption
+        assert "[SCHWARZ · M](" in caption
+        assert "[SCHWARZ · L](" in caption
 
     def test_no_watched_badge(self):
         deal = _sample_deal(is_watched=False)
         caption = _build_caption(deal)
         assert "Watched" not in caption
+
+    def test_color_inline_follows_size(self):
+        deal = _sample_deal(color_names=["NAVY", "OFF WHITE", "NAVY"])
+        caption = _build_caption(deal)
+        assert "[NAVY · S](" in caption
+        assert "[OFF WHITE · M](" in caption
+        assert "[NAVY · L](" in caption
+        assert "Color:" not in caption
+
+    def test_empty_color_renders_plain_size_link(self):
+        deal = _sample_deal(color_names=["", "", ""])
+        caption = _build_caption(deal)
+        assert "[S](" in caption
+        assert "[M](" in caption
+        assert "[L](" in caption
+        assert "Color:" not in caption
 
 
 class TestTelegramNotifier:
